@@ -1,0 +1,12 @@
+# Build output
+bin/
+tmp/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Runtime log (written next to the deployed .asi in the game folder, not here,
+# but ignore just in case one ever lands in the repo)
+BlackjackCheat.log
