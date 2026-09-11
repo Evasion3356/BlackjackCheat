@@ -11,11 +11,20 @@ namespace Config
 {
 	struct Values
 	{
+		// Trimmed (Session 8, user request) to only the toggles that do
+		// something in Release: ShowPlayerHands only ever gated a
+		// Debug-only per-seat text dump nobody but a dev cares about (the
+		// user explicitly doesn't want opponents' hands surfaced at all,
+		// not even in Debug), and ShowInsuranceAdvice is folded into
+		// ShowAdvice below -- insurance IS advice, no reason for its own
+		// switch. ShowCardCount, a stray leftover key some old
+		// BlackjackCheat.ini files still have on disk from before Session
+		// 7 removed card counting, was never a real field here and is
+		// actively dropped on the next Reload/save now -- see
+		// Config.cpp's ReloadImpl().
 		bool ShowDealerHand = true;
-		bool ShowPlayerHands = true;
-		bool ShowAdvice = true;
-		bool ShowInsuranceAdvice = true; // Release+Debug, same convention as ShowAdvice -- now a deterministic read of the already-known dealer hole card, not a card-count deviation (Session 7 fifth addendum, see BlackjackCheat.cpp)
-		bool ShowDeckPrediction = true;  // Release+Debug -- PRIMARY feature as of Session 4: dealer's real hole card + deterministic draw-out prediction, see BlackjackCheat.cpp's SimulateDealerOutcome()
+		bool ShowAdvice = true;         // hit/stand/double/split AND insurance -- see BlackjackCheat.cpp's DrawInsuranceStatus() call site
+		bool ShowDeckPrediction = true; // Release+Debug -- PRIMARY feature as of Session 4: dealer's real hole card icon + the "Next cards" 3-card-ahead preview, see BlackjackCheat.cpp's SimulateDealerOutcome()
 
 #ifdef _DEBUG
 		// HUD text panel position/scale -- dev-tuning values, not something
@@ -32,6 +41,28 @@ namespace Config
 		// WinPredictionX/Y.
 		float AdviceX = 0.48f;
 		float AdviceY = 0.5f;
+
+		// Dealer hole-card icon, drawn top-right -- same calibrated spot
+		// PokerCheat's own community-card strip uses (Card2DIconBaseX/Y in
+		// PokerCheat's Config.h), per user request to show the dealer's
+		// real (but on-screen face-down) hole card as an actual card-face
+		// sprite there instead of a text line. See BlackjackCheat.cpp's
+		// DrawDealerHoleCardIcon(). X user-confirmed via live Reload Config
+		// tuning (0.821 initial guess -> 0.957).
+		float HoleCardIconX = 0.957f;
+		float HoleCardIconY = 0.078f;
+		float HoleCardIconWidth = 0.03f;
+		float HoleCardIconHeight = 0.075f;
+
+		// "Next cards (if you Hit)" icon strip, drawn to the right of the
+		// "Next cards:" label -- see BlackjackCheat.cpp's
+		// DrawNextCardIcons(). BaseX user-confirmed via live Reload Config
+		// tuning (0.62 initial guess -> 0.55).
+		float NextCardIconBaseX = 0.55f;
+		float NextCardIconY = 0.59f;
+		float NextCardIconSpacingX = 0.03f;
+		float NextCardIconWidth = 0.025f;
+		float NextCardIconHeight = 0.06f;
 #endif
 	};
 

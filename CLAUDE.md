@@ -71,6 +71,22 @@ as PokerCheat's own predicted board. Read `docs/JOURNAL.md` for the full
 derivation history and what a future session needs to do to confirm the
 offsets, and `docs/PITFALLS.md` before touching anything native-related.
 
+## Coding conventions
+
+**No C-style strings/buffers.** No `char buf[N]` locals, `sprintf_s`,
+`strcpy_s`, or hand-rolled size-tracked buffers anywhere in this project's
+own code -- `std::string`/`std::ostringstream` only (see `FormatCard`/
+`FormatCardRun`/`WrapBgFormatText` in `src/BlackjackCheat.cpp` for the
+established pattern; their own header comments explain a real crash this
+already caused once via a fixed `char[]` + `sprintf_s`/`strcat_s` combo).
+The one unavoidable exception is the literal call-site boundary into a
+ScriptHookRDR2 native that requires `char*` (e.g. `GRAPHICS::DRAW_SPRITE`,
+`TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED`) -- build the value as
+`std::string` and pass `const_cast<char*>(str.c_str())` only at that
+call, never a manual fixed-size buffer upstream of it. This applies even
+when porting/adapting code from `../PokerCheat`, which still has some
+older char[]-based helpers of its own -- don't carry that pattern over.
+
 ## Build & deploy
 
 ```
@@ -172,7 +188,15 @@ PokerCheat/CollectorOffline).
 - `src/scriptmenu.h/.cpp`, `src/keyboard.h/.cpp` -- vendored unchanged from
   PokerCheat (itself adapted from the ScriptHookRDR2 SDK's NativeTrainer
   sample).
-- `src/Log.h` -- minimal timestamped file logger (`BlackjackCheat.log`).
+- `src/Log.h` -- async, thread-safe file logger (`BlackjackCheat.log`)
+  built on spdlog (`external\spdlog`, a real git submodule -- see
+  "External resources" below). `Log::Write` takes `std::format`-style
+  `{}` placeholders (compile-time checked), not printf's `%d`/`%s`.
+  Replaced an earlier hand-rolled version that reopened the file with
+  `fopen_s`/`fclose` on every call (synchronous, and not safe against
+  concurrent callers) -- see that header's own header comment for the
+  full design, including the one DllMain-timing tradeoff worth watching
+  on first load after this change.
 - `src/GamePointers.h/.cpp`, `src/PatternScan.h/.cpp` -- generic
   scrThread-pool resolution / AOB pattern scanning, vendored unchanged
   from PokerCheat (nothing poker- or blackjack-specific in either file).
@@ -202,6 +226,14 @@ PokerCheat/CollectorOffline).
   content as PokerCheat's own `external\`, copied rather than shared since
   PokerCheat's copy lives inside its own project folder, not at the
   `RDR2 Shit` root).
+- `external\spdlog\` -- a real git submodule (`.gitmodules`), unlike the
+  two entries above, pinned to release tag v1.17.0
+  (https://github.com/gabime/spdlog). Backs `src/Log.h`. **A fresh clone
+  of this repo needs `git submodule update --init` before it'll build**
+  -- the headers won't exist otherwise. Header-only (no `.cpp`/`.lib` to
+  add to the vcxproj); built with `SPDLOG_USE_STD_FORMAT` +
+  `SPDLOG_WCHAR_TO_UTF8_SUPPORT` (both defined in `src/Log.h` before
+  including any spdlog header) rather than spdlog's bundled fmt.
 - `..\PokerCheat\` -- read `docs/JOURNAL.md` there for the actual
   live-probing methodology (trace statically, run a `Probe*` menu item
   in-game, compare the log against the real screen, re-derive when wrong)

@@ -1,0 +1,56 @@
+[center][size=6]BlackjackCheat[/size]
+[size=3]A deck-ahead advisor for RDR2's single-player blackjack minigame[/size][/center]
+
+[center][color=#FF8000][b]This is an advisor overlay, not an auto-play bot -- you still play every hand yourself, it just tells you the mathematically correct move before you make it.[/b][/color][/center]
+
+[hr][/hr]
+[size=4][b]What it does[/b][/size]
+
+The single-player blackjack table (bjack_sp) deals an entire round from one fixed, already-shuffled 52-card deck. That means the dealer's face-down hole card is already real, dealt data the moment the round starts -- it's just hidden on your screen, not random. BlackjackCheat reads it directly, and then simulates the dealer's forced stand-on-17 draw-out straight off the same deck array, re-running the simulation every frame so it's exact by the time the dealer's real turn actually begins.
+
+Because your own hand's next cards are exact, known data too (nothing else can draw from the shared deck cursor mid-turn), the hit/stand/double advice isn't a textbook basic-strategy chart guessing at an unknown next card -- it tries every legal stopping point for your hand and recommends whichever one actually beats the simulated dealer outcome. Split/no-split still comes from a standard pair chart (including correct split-Ace handling: one forced card each, no further action), and an insurance Yes/No call is shown whenever the dealer shows an Ace.
+
+[size=4][b]Features[/b][/size]
+[list]
+[*][b]Dealer hole card icon[/b] -- see the dealer's real hidden card the instant it's dealt.
+[*][b]"Next cards" preview strip[/b] -- the exact upcoming cards your hand would draw.
+[*][b]Deck-derived hit/stand/double advice[/b] -- simulated against real future cards, not a probability chart.
+[*][b]Split advice[/b] -- pair chart, with correct split-Ace forced-stand behavior.
+[*][b]Insurance advice[/b] -- Yes/No whenever the dealer shows an Ace.
+[*][b]Zero setup[/b] -- the overlay is enabled automatically, no menu, no keybind, no configuration required to just work.
+[*][b]Read-only[/b] -- no game-memory writes, no native game-state manipulation. It only reads and displays data the game has already dealt.
+[/list]
+
+[size=4][b]Requirements[/b][/size]
+[list]
+[*][url=http://www.dev-c.com/rdr2/scripthookrdr2/]ScriptHookRDR2[/url] matching game build [b]1491.50[/b]
+[/list]
+
+[size=4][b]Installation[/b][/size]
+[list=1]
+[*]Install ScriptHookRDR2 per its own instructions if you haven't already.
+[*]Drop [b]BlackjackCheat.asi[/b] into your RDR2 install folder (next to RDR2.exe).
+[*]Launch the game, sit down at a single-player blackjack table.
+[/list]
+That's it -- the overlay activates automatically once you're seated with a hand dealt.
+
+[size=4][b]Configuration[/b][/size]
+A [b]BlackjackCheat.ini[/b] is created next to the .asi on first run, with three toggles under [b][General][/b]:
+[list]
+[*][b]ShowDealerHand[/b] -- the dealer hole-card icon
+[*][b]ShowAdvice[/b] -- the hit/stand/double/split/insurance readout
+[*][b]ShowDeckPrediction[/b] -- the "next cards" preview strip
+[/list]
+All default to [b]true[/b]; set any to [b]false[/b] to hide that part of the HUD.
+
+[size=4][b]Compatibility / limitations[/b][/size]
+[list]
+[*]Built against game build [b]1491.50[/b] specifically -- struct offsets are hardcoded from that build's own scripts and aren't guaranteed to hold on any other build/patch.
+[*]Single-player [b]bjack_sp[/b] only -- not tested against, and not intended for, any multiplayer table.
+[*]Advisor-only by design: it will never place bets, hit, stand, or otherwise act on your behalf.
+[/list]
+
+[size=4][b]Credits[/b][/size]
+Built on [url=http://www.dev-c.com/rdr2/scripthookrdr2/]Alexander Blade's ScriptHookRDR2[/url].
+
+See the included [b]CHANGELOG.md[/b] for the full version history.

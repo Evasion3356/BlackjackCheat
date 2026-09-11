@@ -678,7 +678,7 @@ namespace BlackjackCheat
 	void Toggle()
 	{
 		Enabled = !Enabled;
-		Log::Write("BlackjackCheat::Toggle -> %s", Enabled ? "ON" : "OFF");
+		Log::Write("BlackjackCheat::Toggle -> {}", Enabled ? "ON" : "OFF");
 	}
 
 	// ------------------------------------------------------------------
@@ -775,6 +775,58 @@ namespace BlackjackCheat
 				case 3: return 'C';
 				default: return '?';
 			}
+		}
+
+		// Card FACE texture naming, ported straight from PokerCheat.cpp's
+		// BuildCardTextureName()/FindLoadedCardSetDict() -- func_697 (line
+		// ~25174, see file header comment) builds a texture NAME as
+		// "<SUIT>_<RANK>" inside a "card_set_N" texture dictionary here
+		// too, same as poker's func_925/func_1599, on the same
+		// not-independently-confirmed-for-blackjack assumption SuitLetter()
+		// above already carries. std::string throughout, not PokerCheat's
+		// original fixed char[]/sprintf_s version -- same reasoning as
+		// FormatCard/FormatCardRun below: no manual buffer size to get
+		// wrong. const_cast<char*>(...c_str()) is used only at the actual
+		// native call boundary below (DRAW_SPRITE/
+		// HAS_STREAMED_TEXTURE_DICT_LOADED require char*, not const
+		// std::string&).
+		std::string BuildCardTextureName(std::int32_t rank, std::int32_t suit)
+		{
+			const char* suitName;
+			switch (suit)
+			{
+				case 0: suitName = "HEARTS_"; break;
+				case 1: suitName = "DIAMONDS_"; break;
+				case 2: suitName = "SPADES_"; break;
+				case 3: suitName = "CLUBS_"; break;
+				default: suitName = ""; break;
+			}
+
+			return std::string(suitName) + RankName(rank);
+		}
+
+		// The real card_set_N number depends on which table/location skin
+		// is active -- instead of reimplementing that selection logic,
+		// this probes which card_set_N dictionary is ALREADY streamed in,
+		// since the game itself must have already loaded the correct one
+		// to be showing its own cards right now. Falls back to requesting
+		// card_set_1 if none are found loaded yet.
+		constexpr int kCardSetProbeLo = 1;
+		constexpr int kCardSetProbeHi = 8;
+
+		bool FindLoadedCardSetDict(std::string& outDict)
+		{
+			for (int n = kCardSetProbeLo; n <= kCardSetProbeHi; n++)
+			{
+				std::string candidate = "card_set_" + std::to_string(n);
+				if (TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(candidate.c_str())))
+				{
+					outDict = candidate;
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		// Type-safe replacements for the old fixed-size char[] + sprintf_s/
@@ -1127,8 +1179,8 @@ namespace BlackjackCheat
 					}
 				}
 
-				Log::Write("PredictionCheck: dealer draw-out predicted-at-round-start=[ %s] actual=[ %s] %s",
-					predictedStr.c_str(), actualStr.c_str(),
+				Log::Write("PredictionCheck: dealer draw-out predicted-at-round-start=[ {}] actual=[ {}] {}",
+					predictedStr, actualStr,
 					match ? "MATCH" : "MISMATCH (expected -- this baseline is deliberately the OLD round-start-only guess for validation purposes; the HUD's live prediction self-corrects independently, see SimulateDealerOutcome()'s header comment)");
 #endif
 				g_predictionRoundActive = false;
@@ -1235,28 +1287,48 @@ namespace BlackjackCheat
 
 		// Dealer's real hole card, PRIMARY feature as of Session 4 -- exact
 		// data (see PredictedHand's header comment above), not a
-		// probability, shown in Release too via the same UIDEBUG pipeline
-		// DrawAdviceStatus/DrawInsuranceStatus already use there. Positioned
-		// below both of those so all three can be visible together.
-#ifndef _DEBUG
-		constexpr float kReleaseHoleCardYOffset = 0.09f;
-#endif
+		// probability. Session 8 (user request): drawn as an actual
+		// card-face icon in the top-right corner -- the same calibrated
+		// spot and DRAW_SPRITE/card_set_N technique PokerCheat's own
+		// DrawCommunityCardIcons() uses for its community-card strip --
+		// instead of the text line this used to be (DrawDealerHoleCardStatus,
+		// now removed). Ghosted (reduced alpha), same convention
+		// PokerCheat uses for a predicted-but-not-yet-revealed community
+		// card: this card IS already dealt/known with certainty, but the
+		// real table still shows it face down, so the alpha marks "we
+		// know this, the game hasn't shown it yet" rather than genuine
+		// uncertainty.
+		constexpr int kHoleCardIconAlpha = 140;
 
-		void DrawDealerHoleCardStatus(std::int32_t rank, std::int32_t suit)
+		void DrawDealerHoleCardIcon(std::int32_t rank, std::int32_t suit)
 		{
+			if (rank < 2)
+				return;
+
+			std::string cardSetDict;
+			if (!FindLoadedCardSetDict(cardSetDict))
+			{
+				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
+				return;
+			}
+
 #ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
-			float x = cfg.AdviceX;
-			float y = cfg.AdviceY + 0.09f;
+			float x = cfg.HoleCardIconX;
+			float y = cfg.HoleCardIconY;
+			float width = cfg.HoleCardIconWidth;
+			float height = cfg.HoleCardIconHeight;
 #else
-			float x = kReleaseAdviceX;
-			float y = kReleaseAdviceY + kReleaseHoleCardYOffset;
+			constexpr float x = 0.957f; // user-confirmed via live Reload Config tuning (0.821 initial guess -> 0.957)
+			constexpr float y = 0.078f;
+			constexpr float width = 0.03f;
+			constexpr float height = 0.075f;
 #endif
-			std::string label = "Dealer hole: " + FormatCard(rank, suit);
-			std::string formatText = WrapBgFormatText(label, 26);
 
-			UIDEBUG::_BG_SET_TEXT_COLOR(255, 220, 140, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);
+			std::string textureName = BuildCardTextureName(rank, suit);
+
+			GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.c_str()), const_cast<char*>(textureName.c_str()),
+				x, y, width, height, 0.0f, 255, 255, 255, kHoleCardIconAlpha, 0);
 		}
 
 		// Whatever cards are sitting at and after the deck's current
@@ -1273,30 +1345,72 @@ namespace BlackjackCheat
 		// your own second hit, or the dealer's draw-out can consume them
 		// first depending on how play proceeds from here, so the label
 		// only promises "if you Hit" for cursor+0. Positioned below
-		// DrawDealerHoleCardStatus (which is itself below Insurance, which
-		// is below Advice) so all four can stack and be visible together.
+		// Insurance, which is below Advice (the dealer hole-card text line
+		// that used to sit between them is now the top-right icon above,
+		// see DrawDealerHoleCardIcon()).
 #ifndef _DEBUG
-		constexpr float kReleaseNextCardYOffset = 0.135f;
+		constexpr float kReleaseNextCardYOffset = 0.09f;
 #endif
+
+		// Session 8 (user request): the "next card(s) if you Hit" cards
+		// themselves are now drawn as card-face icons next to a short
+		// "Next cards:" label, same DRAW_SPRITE/card_set_N technique as
+		// DrawDealerHoleCardIcon() above, instead of spelling each card
+		// out as text (RankName+SuitLetter) inline in the label.
+		constexpr int kNextCardIconMaxCount = 3;
+
+		void DrawNextCardIcons(const std::int32_t* ranks, const std::int32_t* suits, std::int32_t count)
+		{
+			std::string cardSetDict;
+			if (!FindLoadedCardSetDict(cardSetDict))
+			{
+				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
+				return;
+			}
+
+#ifdef _DEBUG
+			const Config::Values& cfg = Config::Get();
+			float baseX = cfg.NextCardIconBaseX;
+			float y = cfg.NextCardIconY;
+			float spacingX = cfg.NextCardIconSpacingX;
+			float width = cfg.NextCardIconWidth;
+			float height = cfg.NextCardIconHeight;
+#else
+			constexpr float baseX = 0.55f; // user-confirmed via live Reload Config tuning (0.62 initial guess -> 0.55)
+			constexpr float y = 0.59f;
+			constexpr float spacingX = 0.03f;
+			constexpr float width = 0.025f;
+			constexpr float height = 0.06f;
+#endif
+
+			for (std::int32_t i = 0; i < count && i < kNextCardIconMaxCount; i++)
+			{
+				if (ranks[i] < 2)
+					continue;
+
+				std::string textureName = BuildCardTextureName(ranks[i], suits[i]);
+
+				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.c_str()), const_cast<char*>(textureName.c_str()),
+					baseX + static_cast<float>(i) * spacingX, y, width, height, 0.0f, 255, 255, 255, 255, 0);
+			}
+		}
 
 		void DrawNextCardStatus(const std::int32_t* ranks, const std::int32_t* suits, std::int32_t count)
 		{
 #ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
 			float x = cfg.AdviceX;
-			float y = cfg.AdviceY + 0.135f;
+			float y = cfg.AdviceY + 0.09f;
 #else
 			float x = kReleaseAdviceX;
 			float y = kReleaseAdviceY + kReleaseNextCardYOffset;
 #endif
-			std::string label = "Next card (if you Hit): " + FormatCard(ranks[0], suits[0]);
-			for (std::int32_t i = 1; i < count; i++)
-				label += "  |  then " + FormatCard(ranks[i], suits[i]);
-
-			std::string formatText = WrapBgFormatText(label, 26);
+			std::string formatText = WrapBgFormatText("Next cards:", 26);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(180, 255, 220, 255);
 			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);
+
+			DrawNextCardIcons(ranks, suits, count);
 		}
 
 		void DrawOverlay()
@@ -1382,15 +1496,15 @@ namespace BlackjackCheat
 
 			// Release+Debug: the dealer's real hole card, exact data read
 			// straight from the already-dealt hand struct (see
-			// PredictedHand's header comment) -- shown via the same
-			// UIDEBUG pipeline as DrawAdviceStatus/DrawInsuranceStatus.
+			// PredictedHand's header comment) -- drawn as a card-face icon
+			// top-right, see DrawDealerHoleCardIcon()'s own header comment.
 			if (cfg.ShowDeckPrediction && dealerHand.count >= 2)
-				DrawDealerHoleCardStatus(dealerHand.ranks[0], dealerHand.suits[0]); // Session 7: index 0 is the real hole card, not index 1 -- see PredictedHand's header comment above
+				DrawDealerHoleCardIcon(dealerHand.ranks[0], dealerHand.suits[0]); // Session 7: index 0 is the real hole card, not index 1 -- see PredictedHand's header comment above
 
 			BlackjackHandEval::Action bestAction = BlackjackHandEval::Action::Stand;
 			bool haveAdvice = false;
 
-			if (cfg.ShowPlayerHands || cfg.ShowAdvice)
+			if (cfg.ShowAdvice)
 			{
 				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 				{
@@ -1415,22 +1529,6 @@ namespace BlackjackCheat
 							continue;
 
 						BlackjackHandEval::HandValue value = BlackjackHandEval::EvaluateHand(hand.ranks, hand.count);
-
-#ifdef _DEBUG
-						if (cfg.ShowPlayerHands)
-						{
-							std::string cardsStr = FormatHandCards(hand);
-
-							std::string line = "Seat " + std::to_string(seat) + " hand " + std::to_string(h) + ": "
-								+ cardsStr + "- " + std::to_string(value.total)
-								+ (value.soft ? " (soft)" : "")
-								+ (value.bust ? " BUST" : "")
-								+ (value.blackjack ? " BLACKJACK" : "")
-								+ (isMe ? "  (You)" : "");
-							DrawLine(x, y, line);
-							y += kLineHeight;
-						}
-#endif
 
 						// Advice is only computed/shown for the local
 						// player's own hand(s) -- there's no reason to
@@ -1497,7 +1595,7 @@ namespace BlackjackCheat
 			// now a CERTAINTY, not a guess: take it if and only if the
 			// already-known hole card is worth 10 (10/J/Q/K), the exact
 			// condition for dealer blackjack when the up card is an Ace.
-			if (cfg.ShowInsuranceAdvice && dealerHand.count >= 2 && dealerHand.ranks[1] == 14) // Session 7: ranks[1] is the real up card -- see PredictedHand's header comment above
+			if (cfg.ShowAdvice && dealerHand.count >= 2 && dealerHand.ranks[1] == 14) // Session 8: folded into ShowAdvice, no separate toggle -- insurance IS advice. Session 7: ranks[1] is the real up card -- see PredictedHand's header comment above
 				DrawInsuranceStatus(BlackjackHandEval::CardValue(dealerHand.ranks[0]) == 10);
 		}
 	}
@@ -1520,32 +1618,32 @@ namespace BlackjackCheat
 			return;
 		}
 
-		Log::Write("ProbeTableStruct: bjack_sp thread found (id=%u, stack=0x%llX, stackSize=%u)",
+		Log::Write("ProbeTableStruct: bjack_sp thread found (id={}, stack=0x{:X}, stackSize={})",
 			thread->m_Context.m_ThreadId,
 			reinterpret_cast<unsigned long long>(thread->m_Stack),
 			thread->m_Context.m_StackSize);
 
 		std::int32_t mySeatByF9 = ReadInt(thread, kMySeatSlot);
 		std::int32_t mySeat = FindMySeatByPed(thread);
-		Log::Write("ProbeTableStruct: mySeat candidates -- f_9 (slot %u, SECONDARY, MEDIUM confidence) = %d, ped-array match (PRIMARY, HIGH confidence, see FindMySeatByPed) = %d%s",
+		Log::Write("ProbeTableStruct: mySeat candidates -- f_9 (slot {}, SECONDARY, MEDIUM confidence) = {}, ped-array match (PRIMARY, HIGH confidence, see FindMySeatByPed) = {}{}",
 			kMySeatSlot, mySeatByF9, mySeat, (mySeatByF9 == mySeat) ? "  <-- AGREE" : "  <-- DISAGREE, worth re-checking against the real screen");
 
-		Log::Write("ProbeTableStruct: seat ped handles (uLocal_14.f_1724+946, stride 46, slot base %u):", kPedSceneSlot + kSeatPedArrayOffset);
+		Log::Write("ProbeTableStruct: seat ped handles (uLocal_14.f_1724+946, stride 46, slot base {}):", kPedSceneSlot + kSeatPedArrayOffset);
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 		{
 			std::int32_t pedHandle = ReadInt(thread, kPedSceneSlot + kSeatPedArrayOffset + seat * kSeatPedStride);
-			Log::Write("  seat %u ped handle = %d%s", seat, pedHandle, (static_cast<std::int32_t>(seat) == mySeat) ? "  <-- matches PLAYER::PLAYER_PED_ID()" : "");
+			Log::Write("  seat {} ped handle = {}{}", seat, pedHandle, (static_cast<std::int32_t>(seat) == mySeat) ? "  <-- matches PLAYER::PLAYER_PED_ID()" : "");
 		}
 
 		HandCards dealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
 		std::string dealerStr = FormatHandCards(dealerHand);
 		std::int32_t dealerValueField = ReadInt(thread, kTableSlot + kDealerHandOffset + kHandValueOffset);
-		Log::Write("ProbeTableStruct: dealer hand (Table.f_2, slot %u) count=%d cards=[ %s] rawValueField(f_24)=%d",
-			kTableSlot + kDealerHandOffset, dealerHand.count, dealerStr.c_str(), dealerValueField);
+		Log::Write("ProbeTableStruct: dealer hand (Table.f_2, slot {}) count={} cards=[ {}] rawValueField(f_24)={}",
+			kTableSlot + kDealerHandOffset, dealerHand.count, dealerStr, dealerValueField);
 
 		std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
 		std::int32_t deckCount = ReadInt(thread, kDeckSlot + kDeckCountOffset);
-		Log::Write("ProbeTableStruct: deck (Table.f_592, slot %u) cursor=%d count=%d (expect count=52 mid-round) -- next 4 undrawn cards:",
+		Log::Write("ProbeTableStruct: deck (Table.f_592, slot {}) cursor={} count={} (expect count=52 mid-round) -- next 4 undrawn cards:",
 			kDeckSlot, deckCursor, deckCount);
 		for (std::int32_t i = 0; i < 4; i++)
 		{
@@ -1554,10 +1652,10 @@ namespace BlackjackCheat
 				break;
 			std::int32_t rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
 			std::int32_t suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
-			Log::Write("  deck[%d]: %s%c", idx, RankName(rank), SuitLetter(suit));
+			Log::Write("  deck[{}]: {}{}", idx, RankName(rank), SuitLetter(suit));
 		}
 
-		Log::Write("ProbeTableStruct: seats (Table.f_27, base slot %u, stride %u, count %u):",
+		Log::Write("ProbeTableStruct: seats (Table.f_27, base slot {}, stride {}, count {}):",
 			kTableSlot + kSeatsBase, kSeatStride, kSeatCount);
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 		{
@@ -1566,7 +1664,7 @@ namespace BlackjackCheat
 			std::int32_t handCount = ReadInt(thread, seatBase + kSeatHandCountOffset);
 			std::int32_t currentHandIndex = ReadInt(thread, seatBase + kSeatCurrentHandIndexOffset);
 
-			Log::Write("  seat %u (base slot %u): occupiedMarker(f_0)=%d handCount(f_59)=%d currentHandIndex(f_3, Session 5)=%d%s%s",
+			Log::Write("  seat {} (base slot {}): occupiedMarker(f_0)={} handCount(f_59)={} currentHandIndex(f_3, Session 5)={}{}{}",
 				seat, seatBase, occupiedMarker, handCount, currentHandIndex,
 				(currentHandIndex < handCount) ? "  <-- still acting this round" : "  <-- done acting (or unoccupied)",
 				(static_cast<std::int32_t>(seat) == mySeat) ? "  <-- candidate YOUR SEAT" : "");
@@ -1580,16 +1678,16 @@ namespace BlackjackCheat
 				HandCards hand = ReadHand(thread, handSlot);
 				std::string handStr = FormatHandCards(hand);
 				std::int32_t rawValueField = ReadInt(thread, handSlot + kHandValueOffset);
-				Log::Write("    hand %u (slot %u): count=%d cards=[ %s] rawValueField(f_24)=%d",
-					h, handSlot, hand.count, handStr.c_str(), rawValueField);
+				Log::Write("    hand {} (slot {}): count={} cards=[ {}] rawValueField(f_24)={}",
+					h, handSlot, hand.count, handStr, rawValueField);
 			}
 		}
 
-		Log::Write("ProbeTableStruct: raw window around kTableSlot (slot %u), offsets -4..+40, for re-deriving offsets if any of the above looks wrong:", kTableSlot);
+		Log::Write("ProbeTableStruct: raw window around kTableSlot (slot {}), offsets -4..+40, for re-deriving offsets if any of the above looks wrong:", kTableSlot);
 		for (std::int32_t off = -4; off <= 40; off++)
 		{
 			std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(static_cast<std::int32_t>(kTableSlot) + off));
-			Log::Write("  tableraw[%+d] (slot %d) = %d", off, static_cast<std::int32_t>(kTableSlot) + off, value);
+			Log::Write("  tableraw[{:+}] (slot {}) = {}", off, static_cast<std::int32_t>(kTableSlot) + off, value);
 		}
 	}
 
@@ -1608,10 +1706,10 @@ namespace BlackjackCheat
 		std::uintptr_t localBase = base + static_cast<std::uintptr_t>(kLocalStructIndex) * 8u;
 		std::uintptr_t tableBase = base + static_cast<std::uintptr_t>(kTableSlot) * 8u;
 
-		Log::Write("DumpLocalStackRange: start=0x%llX end=0x%llX (size=%u slots, %llu bytes)",
+		Log::Write("DumpLocalStackRange: start=0x{:X} end=0x{:X} (size={} slots, {} bytes)",
 			static_cast<unsigned long long>(base), static_cast<unsigned long long>(end),
 			stackSizeSlots, static_cast<unsigned long long>(end - base));
-		Log::Write("DumpLocalStackRange: uLocal_14 (slot %u) starts at 0x%llX, Table candidate (slot %u) starts at 0x%llX",
+		Log::Write("DumpLocalStackRange: uLocal_14 (slot {}) starts at 0x{:X}, Table candidate (slot {}) starts at 0x{:X}",
 			kLocalStructIndex, static_cast<unsigned long long>(localBase),
 			kTableSlot, static_cast<unsigned long long>(tableBase));
 	}
@@ -1627,7 +1725,7 @@ namespace BlackjackCheat
 
 		std::int32_t mySeat = FindMySeatByPed(thread);
 		std::int32_t mySeatByF9 = ReadInt(thread, kMySeatSlot);
-		Log::Write("ProbeSeatHands: mySeat (ped-array, PRIMARY)=%d, f_9 (SECONDARY)=%d%s",
+		Log::Write("ProbeSeatHands: mySeat (ped-array, PRIMARY)={}, f_9 (SECONDARY)={}{}",
 			mySeat, mySeatByF9, (mySeat == mySeatByF9) ? "  <-- AGREE" : "  <-- DISAGREE");
 
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
@@ -1639,11 +1737,11 @@ namespace BlackjackCheat
 
 			if (occupiedMarker == -1)
 			{
-				Log::Write("  seat %u: unoccupied (occupiedMarker=-1)", seat);
+				Log::Write("  seat {}: unoccupied (occupiedMarker=-1)", seat);
 				continue;
 			}
 
-			Log::Write("  seat %u: bankroll(f_1, candidate, slot %u)=%d -- sanity check: should look like a plausible in-game dollar amount",
+			Log::Write("  seat {}: bankroll(f_1, candidate, slot {})={} -- sanity check: should look like a plausible in-game dollar amount",
 				seat, seatBase + kSeatBankrollOffset, bankroll);
 
 			for (std::int32_t h = 0; h < handCount && h < static_cast<std::int32_t>(kMaxHandsPerSeat); h++)
@@ -1655,8 +1753,8 @@ namespace BlackjackCheat
 				std::int32_t bet = ReadInt(thread, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h));
 				bool isSplitAceHand = (handCount == static_cast<std::int32_t>(kMaxHandsPerSeat)) && hand.count > 0 && hand.ranks[0] == 14;
 
-				Log::Write("  seat %u hand %d: cards=[ %s] computedTotal=%d soft=%d bust=%d blackjack=%d bet(f_4[%d], candidate)=%d isSplitAceHand(candidate)=%d%s",
-					seat, h, handStr.c_str(), value.total, value.soft, value.bust, value.blackjack, h, bet, isSplitAceHand,
+				Log::Write("  seat {} hand {}: cards=[ {}] computedTotal={} soft={} bust={} blackjack={} bet(f_4[{}], candidate)={} isSplitAceHand(candidate)={}{}",
+					seat, h, handStr, value.total, value.soft, value.bust, value.blackjack, h, bet, isSplitAceHand,
 					(static_cast<std::int32_t>(seat) == mySeat) ? "  <-- candidate YOUR SEAT" : "");
 			}
 		}
@@ -1674,11 +1772,11 @@ namespace BlackjackCheat
 		HandCards dealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
 		if (dealerHand.count < 2)
 		{
-			Log::Write("ProbeDeckPrediction: dealer has fewer than 2 cards right now (count=%d) -- run this again once a hand is dealt", dealerHand.count);
+			Log::Write("ProbeDeckPrediction: dealer has fewer than 2 cards right now (count={}) -- run this again once a hand is dealt", dealerHand.count);
 			return;
 		}
 
-		Log::Write("ProbeDeckPrediction: dealer hole card (real, ALREADY dealt but hidden on screen until reveal) = %s%c, up card (real, visible) = %s%c -- compare the hole card against the real screen once it flips over (Session 7: [0]=hole,[1]=up, the OPPOSITE of this file's original assumption -- live-confirmed by the user)",
+		Log::Write("ProbeDeckPrediction: dealer hole card (real, ALREADY dealt but hidden on screen until reveal) = {}{}, up card (real, visible) = {}{} -- compare the hole card against the real screen once it flips over (Session 7: [0]=hole,[1]=up, the OPPOSITE of this file's original assumption -- live-confirmed by the user)",
 			RankName(dealerHand.ranks[0]), SuitLetter(dealerHand.suits[0]),
 			RankName(dealerHand.ranks[1]), SuitLetter(dealerHand.suits[1]));
 
@@ -1688,10 +1786,10 @@ namespace BlackjackCheat
 		BlackjackHandEval::HandValue predValue = BlackjackHandEval::EvaluateHand(predicted.ranks, predicted.totalCount);
 
 		std::string predStr = FormatCardRun(predicted.ranks, predicted.suits, predicted.knownCount, predicted.totalCount);
-		Log::Write("ProbeDeckPrediction: simulated dealer draw-out from cursor=%d (count=%d) -- predicted extra draws=[ %s] predicted final total=%d%s (Session 5: this re-simulates from the LIVE cursor every tick, so it's exact once every occupied seat ahead of the dealer is done drawing -- see SimulateDealerOutcome()'s header comment; the round-end \"PredictionCheck\" log line separately validates a FROZEN round-start baseline every round, no F10 needed for that part)",
-			deckCursor, deckCount, predStr.c_str(), predValue.total, predValue.bust ? " BUST" : "");
+		Log::Write("ProbeDeckPrediction: simulated dealer draw-out from cursor={} (count={}) -- predicted extra draws=[ {}] predicted final total={}{} (Session 5: this re-simulates from the LIVE cursor every tick, so it's exact once every occupied seat ahead of the dealer is done drawing -- see SimulateDealerOutcome()'s header comment; the round-end \"PredictionCheck\" log line separately validates a FROZEN round-start baseline every round, no F10 needed for that part)",
+			deckCursor, deckCount, predStr, predValue.total, predValue.bust ? " BUST" : "");
 
-		Log::Write("ProbeDeckPrediction: next 6 raw undrawn deck cards from cursor=%d (whatever hand draws next, in whatever the real turn order is, gets these in order):", deckCursor);
+		Log::Write("ProbeDeckPrediction: next 6 raw undrawn deck cards from cursor={} (whatever hand draws next, in whatever the real turn order is, gets these in order):", deckCursor);
 		for (std::int32_t i = 0; i < 6; i++)
 		{
 			std::int32_t idx = deckCursor + i;
@@ -1699,7 +1797,7 @@ namespace BlackjackCheat
 				break;
 			std::int32_t rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
 			std::int32_t suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
-			Log::Write("  deck[%d]: %s%c", idx, RankName(rank), SuitLetter(suit));
+			Log::Write("  deck[{}]: {}{}", idx, RankName(rank), SuitLetter(suit));
 		}
 	}
 
@@ -1727,7 +1825,7 @@ namespace BlackjackCheat
 		std::string outPath = pathStream.str();
 
 		if (GamePointers::DumpLocalStackJsonl(thread, outPath.c_str()))
-			Log::Write("DumpFullStackJsonl: wrote %s -- grep/jq it for a known real value (e.g. a visible card's rank/suit, a bankroll amount) to find where it actually lives, then diff against a prior dump's file to see what actually changed", outPath.c_str());
+			Log::Write("DumpFullStackJsonl: wrote {} -- grep/jq it for a known real value (e.g. a visible card's rank/suit, a bankroll amount) to find where it actually lives, then diff against a prior dump's file to see what actually changed", outPath);
 		else
 			Log::Write("DumpFullStackJsonl: failed, see prior log line for why");
 	}

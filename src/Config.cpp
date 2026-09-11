@@ -73,46 +73,75 @@ namespace
 		}
 
 		Config::Values defaults;
-		auto& general = ini.sections["General"];
+		{
+			auto& general = ini.sections["General"];
+			g_values.ShowDealerHand = GetOr(general, "ShowDealerHand", defaults.ShowDealerHand);
+			g_values.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
+			g_values.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
 
-		g_values.ShowDealerHand = GetOr(general, "ShowDealerHand", defaults.ShowDealerHand);
-		g_values.ShowPlayerHands = GetOr(general, "ShowPlayerHands", defaults.ShowPlayerHands);
-		g_values.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
-		g_values.ShowInsuranceAdvice = GetOr(general, "ShowInsuranceAdvice", defaults.ShowInsuranceAdvice);
-		g_values.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
+#ifdef _DEBUG
+			auto& hud = ini.sections["HUD"];
+			g_values.PanelX = GetOr(hud, "PanelX", defaults.PanelX);
+			g_values.PanelY = GetOr(hud, "PanelY", defaults.PanelY);
+			g_values.TextScale = GetOr(hud, "TextScale", defaults.TextScale);
+			g_values.TitleTextScale = GetOr(hud, "TitleTextScale", defaults.TitleTextScale);
+			g_values.AdviceX = GetOr(hud, "AdviceX", defaults.AdviceX);
+			g_values.AdviceY = GetOr(hud, "AdviceY", defaults.AdviceY);
+			g_values.HoleCardIconX = GetOr(hud, "HoleCardIconX", defaults.HoleCardIconX);
+			g_values.HoleCardIconY = GetOr(hud, "HoleCardIconY", defaults.HoleCardIconY);
+			g_values.HoleCardIconWidth = GetOr(hud, "HoleCardIconWidth", defaults.HoleCardIconWidth);
+			g_values.HoleCardIconHeight = GetOr(hud, "HoleCardIconHeight", defaults.HoleCardIconHeight);
+			g_values.NextCardIconBaseX = GetOr(hud, "NextCardIconBaseX", defaults.NextCardIconBaseX);
+			g_values.NextCardIconY = GetOr(hud, "NextCardIconY", defaults.NextCardIconY);
+			g_values.NextCardIconSpacingX = GetOr(hud, "NextCardIconSpacingX", defaults.NextCardIconSpacingX);
+			g_values.NextCardIconWidth = GetOr(hud, "NextCardIconWidth", defaults.NextCardIconWidth);
+			g_values.NextCardIconHeight = GetOr(hud, "NextCardIconHeight", defaults.NextCardIconHeight);
+#endif
+		}
+
+		// Rebuilt from scratch rather than reusing the sections just
+		// parsed above -- any key not explicitly written back below (a
+		// stale leftover from a removed feature, e.g. ShowPlayerHands/
+		// ShowInsuranceAdvice/ShowCardCount from before Session 8) is
+		// dropped instead of round-tripping forever. Only the toggles
+		// that actually do something in Release belong in [General]
+		// (Session 8, user request).
+		ini.sections.clear();
+
+		auto& general = ini.sections["General"];
+		SetBool(general, "ShowDealerHand", g_values.ShowDealerHand);
+		SetBool(general, "ShowAdvice", g_values.ShowAdvice);
+		SetBool(general, "ShowDeckPrediction", g_values.ShowDeckPrediction);
 
 #ifdef _DEBUG
 		auto& hud = ini.sections["HUD"];
-		g_values.PanelX = GetOr(hud, "PanelX", defaults.PanelX);
-		g_values.PanelY = GetOr(hud, "PanelY", defaults.PanelY);
-		g_values.TextScale = GetOr(hud, "TextScale", defaults.TextScale);
-		g_values.TitleTextScale = GetOr(hud, "TitleTextScale", defaults.TitleTextScale);
-		g_values.AdviceX = GetOr(hud, "AdviceX", defaults.AdviceX);
-		g_values.AdviceY = GetOr(hud, "AdviceY", defaults.AdviceY);
 		SetFloat(hud, "PanelX", g_values.PanelX);
 		SetFloat(hud, "PanelY", g_values.PanelY);
 		SetFloat(hud, "TextScale", g_values.TextScale);
 		SetFloat(hud, "TitleTextScale", g_values.TitleTextScale);
 		SetFloat(hud, "AdviceX", g_values.AdviceX);
 		SetFloat(hud, "AdviceY", g_values.AdviceY);
+		SetFloat(hud, "HoleCardIconX", g_values.HoleCardIconX);
+		SetFloat(hud, "HoleCardIconY", g_values.HoleCardIconY);
+		SetFloat(hud, "HoleCardIconWidth", g_values.HoleCardIconWidth);
+		SetFloat(hud, "HoleCardIconHeight", g_values.HoleCardIconHeight);
+		SetFloat(hud, "NextCardIconBaseX", g_values.NextCardIconBaseX);
+		SetFloat(hud, "NextCardIconY", g_values.NextCardIconY);
+		SetFloat(hud, "NextCardIconSpacingX", g_values.NextCardIconSpacingX);
+		SetFloat(hud, "NextCardIconWidth", g_values.NextCardIconWidth);
+		SetFloat(hud, "NextCardIconHeight", g_values.NextCardIconHeight);
 #endif
-
-		SetBool(general, "ShowDealerHand", g_values.ShowDealerHand);
-		SetBool(general, "ShowPlayerHands", g_values.ShowPlayerHands);
-		SetBool(general, "ShowAdvice", g_values.ShowAdvice);
-		SetBool(general, "ShowInsuranceAdvice", g_values.ShowInsuranceAdvice);
-		SetBool(general, "ShowDeckPrediction", g_values.ShowDeckPrediction);
 
 		{
 			std::ofstream os(ResolveIniPath(), std::ios::trunc);
 			if (os)
 				ini.generate(os);
 			else
-				Log::Write("Config::Reload -- failed to open %ls for writing", ResolveIniPath().c_str());
+				Log::Write(L"Config::Reload -- failed to open {} for writing", ResolveIniPath());
 		}
 
-		Log::Write("Config::Reload -- loaded from %ls (ShowDealerHand=%d ShowPlayerHands=%d ShowAdvice=%d)",
-			ResolveIniPath().c_str(), g_values.ShowDealerHand, g_values.ShowPlayerHands, g_values.ShowAdvice);
+		Log::Write(L"Config::Reload -- loaded from {} (ShowDealerHand={} ShowAdvice={} ShowDeckPrediction={})",
+			ResolveIniPath(), g_values.ShowDealerHand, g_values.ShowAdvice, g_values.ShowDeckPrediction);
 	}
 }
 
@@ -126,7 +155,7 @@ namespace Config
 		}
 		catch (const std::exception& e)
 		{
-			Log::Write("Config::Reload -- std::exception: %s -- keeping previous config values", e.what());
+			Log::Write("Config::Reload -- std::exception: {} -- keeping previous config values", e.what());
 		}
 		catch (...)
 		{

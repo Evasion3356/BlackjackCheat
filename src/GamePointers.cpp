@@ -30,7 +30,7 @@ namespace GamePointers
 			}
 
 			auto resolved = PatternScan::ResolveRip(*match, kScriptThreadsOperandOffset);
-			Log::Write("GamePointers::GetScriptThreads: pattern matched at 0x%llX, resolved to 0x%llX",
+			Log::Write("GamePointers::GetScriptThreads: pattern matched at 0x{:X}, resolved to 0x{:X}",
 				static_cast<unsigned long long>(*match), static_cast<unsigned long long>(resolved));
 			return reinterpret_cast<rage::atArray<rage::scrThread*>*>(resolved);
 		}();
@@ -90,7 +90,7 @@ namespace GamePointers
 
 		if (startSlot >= end)
 		{
-			Log::Write("GamePointers::DumpLocalStackJsonl: startSlot %u >= stack size %u, nothing to dump", startSlot, stackSize);
+			Log::Write("GamePointers::DumpLocalStackJsonl: startSlot {} >= stack size {}, nothing to dump", startSlot, stackSize);
 			return false;
 		}
 
@@ -98,7 +98,7 @@ namespace GamePointers
 		fopen_s(&f, outPath, "w");
 		if (!f)
 		{
-			Log::Write("GamePointers::DumpLocalStackJsonl: failed to open %s", outPath);
+			Log::Write("GamePointers::DumpLocalStackJsonl: failed to open {}", outPath);
 			return false;
 		}
 
@@ -120,7 +120,7 @@ namespace GamePointers
 		}
 
 		fclose(f);
-		Log::Write("GamePointers::DumpLocalStackJsonl: wrote slots [%u, %u) to %s", startSlot, end, outPath);
+		Log::Write("GamePointers::DumpLocalStackJsonl: wrote slots [{}, {}) to {}", startSlot, end, outPath);
 		return true;
 	}
 
