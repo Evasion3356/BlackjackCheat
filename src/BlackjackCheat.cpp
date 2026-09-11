@@ -681,6 +681,12 @@ namespace BlackjackCheat
 		Log::Write("BlackjackCheat::Toggle -> {}", Enabled ? "ON" : "OFF");
 	}
 
+	void SetEnabled(bool enabled)
+	{
+		Enabled = enabled;
+		Log::Write("BlackjackCheat::SetEnabled -> {}", Enabled ? "ON" : "OFF");
+	}
+
 	// ------------------------------------------------------------------
 	// UNCONFIRMED struct layout -- see file header comment above for the
 	// full derivation/confidence notes on every one of these.

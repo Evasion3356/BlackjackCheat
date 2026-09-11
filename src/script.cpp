@@ -54,7 +54,9 @@ void ScriptMain()
 	// thread's real stack size).
 	BuildMenu();
 #else
-	BlackjackCheat::Toggle();
+	// SetEnabled(true), not Toggle() -- idempotent against ScriptMain
+	// ever being re-entered (see BlackjackCheat.h's SetEnabled comment).
+	BlackjackCheat::SetEnabled(true);
 #endif
 
 	while (true)

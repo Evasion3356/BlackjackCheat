@@ -16,6 +16,15 @@ namespace BlackjackCheat
 	// "Toggle Blackjack Cheat" item.
 	void Toggle();
 
+	// Sets Enabled directly (idempotent, unlike Toggle()). Release's
+	// ScriptMain calls this instead of Toggle() -- see script.cpp -- so
+	// that if ScriptHookRDR2 ever re-enters ScriptMain (observed live:
+	// a second "BlackjackCheat started" log line minutes after the
+	// first, likely the script thread faulting on one of the
+	// still-unconfirmed struct offsets and getting restarted), the
+	// advisor doesn't get silently toggled back off.
+	void SetEnabled(bool enabled);
+
 	// Called every ScriptMain tick regardless of Enabled state (Enabled is
 	// checked internally). Draws the HUD when Enabled and bjack_sp is
 	// running; no-ops otherwise.
