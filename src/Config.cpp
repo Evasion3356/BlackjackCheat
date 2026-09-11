@@ -82,6 +82,7 @@ namespace
 			g_values.ShowDealerHand = GetOr(general, "ShowDealerHand", defaults.ShowDealerHand);
 			g_values.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
 			g_values.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
+			g_values.ShowCardsBeforeBet = GetOr(general, "ShowCardsBeforeBet", defaults.ShowCardsBeforeBet);
 
 #ifdef _DEBUG
 			auto& hud = ini.sections["HUD"];
@@ -116,6 +117,7 @@ namespace
 		SetBool(general, "ShowDealerHand", g_values.ShowDealerHand);
 		SetBool(general, "ShowAdvice", g_values.ShowAdvice);
 		SetBool(general, "ShowDeckPrediction", g_values.ShowDeckPrediction);
+		SetBool(general, "ShowCardsBeforeBet", g_values.ShowCardsBeforeBet);
 
 #ifdef _DEBUG
 		auto& hud = ini.sections["HUD"];
@@ -144,8 +146,8 @@ namespace
 				Log::Write(L"Config::Reload -- failed to open {} for writing", ResolveIniPath());
 		}
 
-		Log::Write(L"Config::Reload -- loaded from {} (ShowDealerHand={} ShowAdvice={} ShowDeckPrediction={})",
-			ResolveIniPath(), g_values.ShowDealerHand, g_values.ShowAdvice, g_values.ShowDeckPrediction);
+		Log::Write(L"Config::Reload -- loaded from {} (ShowDealerHand={} ShowAdvice={} ShowDeckPrediction={} ShowCardsBeforeBet={})",
+			ResolveIniPath(), g_values.ShowDealerHand, g_values.ShowAdvice, g_values.ShowDeckPrediction, g_values.ShowCardsBeforeBet);
 	}
 }
 

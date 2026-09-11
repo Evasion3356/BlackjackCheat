@@ -1,8 +1,8 @@
 /*
-	Async, thread-safe file logger backed by spdlog (vendored as a git
-	submodule at external\spdlog, pinned to v1.17.0 -- `git submodule
-	update --init` after a fresh clone). Writes BlackjackCheat.log next
-	to the .asi, same location/append-forever behavior as before.
+	Thread-safe file logger backed by spdlog (vendored as a git submodule
+	at external\spdlog, pinned to v1.17.0 -- `git submodule update --init`
+	after a fresh clone). Writes BlackjackCheat.log next to the .asi, same
+	location/append-forever behavior as before.
 
 	Replaces an earlier hand-rolled Log::Write that called fopen_s(...,
 	"a")/fclose on every single call -- synchronous disk I/O on whatever
@@ -12,22 +12,31 @@
 	(compile-time checked against the argument list) instead of spdlog's
 	bundled fmt library or the old printf-style %d/%s/%llX specifiers.
 
-	Logging runs on spdlog's global async thread pool (1 background
-	thread, 8192-slot queue, blocking-overflow policy so a burst never
-	silently drops a diagnostic line) -- the calling thread just pushes
-	an already-formatted message and returns immediately. The logger is
-	a function-local static, constructed (and the background thread
-	spawned) on the first Log::Write call of the process. In practice
-	that first call currently happens during DllMain/DLL_PROCESS_ATTACH,
-	via Config::Reload()'s own startup log line (see main.cpp) -- worth
-	specifically watching on first load after this change, since
-	spawning a thread from DllMain is usually fine only when that thread
-	does nothing but wait on a condition variable and write to an
-	already-open handle (true here: no LoadLibrary/COM/other-DLL-init
-	dependency in spdlog's worker), but it's still a different risk
-	shape than the fully synchronous logging DllMain relied on before.
-	If that ever causes a load-order problem, the fix is a one-line
-	change: spdlog::create_async -> a plain (synchronous) spdlog logger.
+	Release uses spdlog's global ASYNC thread pool (1 background thread,
+	8192-slot queue, blocking-overflow policy so a burst never silently
+	drops a diagnostic line) -- the calling thread just pushes an
+	already-formatted message and returns immediately. Debug uses a plain
+	SYNCHRONOUS logger instead -- deliberate, not a placeholder: Session 9
+	live testing traced a real eject/reinject hang directly to this
+	logger. `spdlog::async::thread_pool`'s destructor (thread_pool-inl.h)
+	calls `t.join()` on its worker thread, and that destructor runs when
+	this file's function-local static `logger` (holding the last
+	shared_ptr to it) gets torn down during DLL unload -- i.e. from
+	inside DllMain's DLL_PROCESS_DETACH. Joining a thread from inside
+	DllMain is a well-documented Windows deadlock trap (the OS loader
+	lock is held for the whole call), which manifested exactly as "eject
+	just doesn't complete" -- not a crash, a hang. Debug is where this
+	project's own workflow (build -> eject -> reinject -> repeat, many
+	times an hour) actually exercises DLL unload constantly, so it gets
+	the deadlock-proof synchronous logger; Release loads once at game
+	launch and is never hot-ejected in normal play, so it keeps the
+	async logger's lower per-call overhead (user directive: "ONLY for
+	debug. Release should be [a]sync[hronous]"). The one place this
+	still touches Release's own risk profile is the ordinary
+	DLL_PROCESS_DETACH that happens at normal game exit -- untested this
+	session (the eject hang was always caught via manual eject, not
+	process exit), flagged as a real, if lower-probability, open
+	question rather than assumed safe.
 
 	SPDLOG_WCHAR_TO_UTF8_SUPPORT adds a second Log::Write overload taking
 	a wide (L"...") format string + wide args -- spdlog formats and
@@ -60,8 +69,19 @@ namespace Log
 		{
 			static const std::shared_ptr<spdlog::logger> logger = []
 			{
+				// Debug: synchronous, deliberately -- no background thread
+				// pool means nothing for DLL_PROCESS_DETACH to deadlock
+				// joining, see this file's own header comment for the real
+				// eject-hang this fixed. Release: async, per user
+				// directive -- Release is never hot-ejected in normal
+				// play, so it keeps the lower per-call overhead.
+#ifdef _DEBUG
+				auto l = spdlog::basic_logger_mt<spdlog::synchronous_factory>(
+					"BlackjackCheat", "BlackjackCheat.log", /*truncate*/ false);
+#else
 				auto l = spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
 					"BlackjackCheat", "BlackjackCheat.log", /*truncate*/ false);
+#endif
 				l->set_pattern("[%H:%M:%S.%e] %v");
 				l->flush_on(spdlog::level::trace); // flush after every line, same durability as the old fclose-every-call behavior
 				return l;

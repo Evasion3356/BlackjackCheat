@@ -846,3 +846,722 @@ this session (all testing was against the Debug build's F10 menu).
    wrong again, reach for F10 -> "Dump Full Stack JSONL" before/after a
    known real state change and diff, rather than re-guessing one offset
    at a time -- this session's actual working method, now proven.
+
+## Session 9 -- deck-before-bet timing traced, pre-bet deal prediction built
+
+**Note for future sessions**: this journal skipped straight from Session
+6 to 9 -- Sessions 7 and 8's work (card-counting removal, the deck-derived
+"pure cheat" engine, the dealer up/hole-card order fix, the deck cursor/
+count offset fix, and the card-face-icon HUD redesign) all happened but
+were only ever written up in `BlackjackCheat.cpp`'s own file header
+comment, never backfilled here. Read that comment's "Session 7"/"Session
+8" addenda for the real history; not reproduced in this file to avoid
+transcribing it out of sync with the authoritative copy. This entry uses
+"Session 9" to match the `.cpp` file's own numbering, not this journal's.
+
+### The question: does betting happen before or after the deck is set?
+
+The user asked directly. Traced `func_718` (the table's own round-phase
+state machine, line 25809 of the decompile): case 0 -- entered the
+instant the PREVIOUS round's dealer draw-out finishes (case 8/9 both end
+by calling `func_1047(uParam0, 0)`) -- calls `func_459` (the same
+rebuild+reshuffle Session 3 already found ties to every round) on its
+very FIRST tick, unconditionally, before the state machine even starts
+waiting for the next round's bets. That wait is `func_1055`/`func_1056`
+(line 35235/35248): `func_1056` specifically requires EVERY occupied
+seat's `seat.f_7` to be nonzero before state 0 can hand off to state 1,
+and state 1 is what actually calls `func_1057`, the real initial-deal
+function. So the full sequence per round is:
+
+    previous round resolves -> deck rebuilt+reshuffled -> table waits
+    for every seat's bet to be confirmed -> func_1057 deals from the
+    ALREADY-fixed deck
+
+The deck is fully determined **before** the bet, not after -- betting has
+zero causal influence on the shuffle. HIGH confidence: this reuses the
+exact same `func_459`/`func_718` case 0 call site the Session 3 deck
+finding already cited (that session read what it does; this session read
+when it runs relative to everything else).
+
+### New field: `seat.f_7` (kSeatBetConfirmedOffset)
+
+Found while tracing the above. `func_759` (line 27401) is a one-line
+getter that reads exactly `seat.f_7`. That same field is what BOTH
+`func_1056` (the state-0-exit gate) and `func_1057` (the real per-seat
+deal gate, alongside `seat.f_4[0]`/`func_492` for the bet amount) check
+before treating a seat as "playing this round". HIGH confidence -- a real
+field independently load-bearing in two different genuine game-logic
+gates, not an inferred offset guessed from a single site.
+
+### New feature: pre-bet deal prediction (`SimulatePreDeal()`)
+
+Since the deck is fixed before the bet, and `func_1057`'s own dealing
+algorithm is now fully traced (seat 0->1->2->3 in order, 2 cards each to
+any seat with both `f_7` and `f_4[0]>0`, then 2 final cards to the
+dealer), the whole deal can be predicted straight off the raw,
+not-yet-touched deck array -- the same "read it directly instead of
+guessing" philosophy as the existing dealer-hole-card and dealer-draw-out
+prediction (Session 4), just moved one phase earlier.
+
+`SimulatePreDeal()` (`BlackjackCheat.cpp`, right after
+`FindMySeatByPed()`) only produces a result when the deck is caught in
+its untouched post-reshuffle state (`cursor==0`, `count==52`) -- outside
+that window there's nothing safe to predict from (either a round is
+already mid-deal, which the existing `dealerHand.count>0` codepaths
+already cover, or the state is otherwise not what this expects). Wired
+into `DrawOverlay()` as:
+  - Debug panel text: "Predicted dealer (before deal)", "Predicted your
+    hand (before deal)", "Next after deal".
+  - Release+Debug card-face icons via the new `DrawPredictedHandIcons()`
+    helper -- the dealer's predicted 2 cards reuse the exact same
+    top-right slot `DrawDealerHoleCardIcon()` already occupies (growing
+    LEFT instead of showing just one icon, since pre-deal NEITHER dealer
+    card is visible on the real table yet, unlike post-deal where only
+    the hole card needs hiding), and the player's own predicted 2 cards
+    reuse the exact slot the post-deal "Next cards" row already occupies
+    (growing RIGHT). No new config keys added -- the two states are
+    mutually exclusive in time, so the existing `HoleCardIconX/Y` and
+    `NextCardIconBaseX/Y/SpacingX/Width/Height` tunables were reused
+    directly rather than adding a parallel, untested set.
+
+Self-correcting the same way `SimulateDealerOutcome()` already is: early
+in the "waiting for bets" phase a seat's `f_7`/`f_4[0]` can still change
+while that seat is mid-adjustment on its own bet slider, so this is only
+a "if dealing happened right now" guess until then -- but `func_1056`
+already REQUIRES every occupied seat to be confirmed before state 0 can
+exit, so the LAST call made right before that transition is exact by
+construction, not a guess, at the exact moment it matters (immediately
+before `func_1057` runs the real deal).
+
+### Build/test status
+
+`BlackjackCheat.vcxproj` Debug AND Release both rebuilt clean, 0
+warnings/errors, both deployed via `PostBuildEvent` (RDR2.exe was not
+running). `BlackjackHandEvalTests.exe` re-run unchanged: still 27/27 (no
+header touched this session).
+
+### NOT yet live-confirmed
+
+Everything in this entry is a fresh static trace + a brand-new feature,
+same starting position every other feature in this file began at:
+
+- `seat.f_7` has never been read by this codebase before today and needs
+  its own live check -- does a seat's HUD-predicted hand actually match
+  what gets dealt once `dealerHand.count`/cursor flip to the post-deal
+  state?
+- The two new icon positions are an unverified guess that the same slot
+  works for 2 stacked icons as well as it did for 1 -- may well need the
+  same kind of live Reload-Config retuning `HoleCardIconX` itself needed
+  (0.821 -> 0.957) once actually seen on screen.
+
+### Next live session priority
+
+1. Sit down, watch the HUD BEFORE placing a bet: does "Predicted your
+   hand (before deal)" / the icon row match the 2 cards you're actually
+   dealt once betting closes?
+2. Same question for "Predicted dealer (before deal)" against the
+   dealer's real hole+up cards once dealt.
+3. Do the two new icon rows actually land somewhere sane on screen, or
+   do they need their own `HUD` config keys and a live-tuning pass the
+   way `HoleCardIconX`/`NextCardIconBaseX` did?
+4. If another seat is occupied, watch whether that seat's bet
+   confirming/un-confirming (adjusting their bet) visibly flips
+   `seatWillPlay` for them before settling -- the clearest live test of
+   the self-correcting claim above.
+5. Backfill Sessions 7 and 8 into this journal from `BlackjackCheat.cpp`'s
+   own file header comment (see the note at the top of this entry) --
+   not attempted this session, flagged as a known gap rather than
+   silently left inconsistent.
+
+### Live confirmation addendum (same session, immediately after)
+
+The user paused right at the bet prompt -- before placing a bet, before
+any cards were dealt -- and ran F10 -> "Dump Full Stack JSONL"
+(`BlackjackCheat_stackdump_20260911_165143.jsonl`). Then placed a $2 bet,
+let the round deal, and dumped again
+(`BlackjackCheat_stackdump_20260911_165458.jsonl`).
+
+**Deck state at the pre-bet dump**: slot 1467 (`kDeckCursorOffset`) = 0,
+slot 1468 (`kDeckCountOffset`) = 52 -- exactly the untouched,
+freshly-reshuffled window `SimulatePreDeal()` targets.
+
+**Replaying `SimulatePreDeal()`'s own algorithm by hand against that raw
+dump**, seat by seat (`kTableSlot`=771, `kSeatsBase`=27, `kSeatStride`=60 ->
+seat bases 798/858/918/978):
+
+| Seat | occupied (offset+0) | f_7 confirmed (offset+7) | f_4[0] bet (offset+4) | Predicted from deck |
+|---|---|---|---|---|
+| 0 (human) | 0 (occupied) | **0** (not yet) | 2 | deck[0..1] |
+| 1 (NPC) | 1 (occupied) | **1** (already!) | 2 | deck[2..3] |
+| 2 | -1 (empty) | -- | -- | skipped |
+| 3 (NPC) | 3 (occupied) | **1** (already!) | 2 | deck[4..5] |
+| dealer | -- | -- | -- | deck[6..7] |
+
+The two NPC seats had ALREADY confirmed their bets before the human even
+saw the bet prompt -- direct, live proof of the exact mechanism
+`func_1056` was traced from (every occupied seat must have `f_7` set
+before the table leaves state 0; NPCs clearly do this instantly, so the
+table visibly waits on the human).
+
+Raw deck contents at that moment (rank,suit pairs, slots 1363+): index
+0-1 = 7,0 (7H); 2-3 = 9,3 (9C); 4-5 = 13,0 (KH); 6-7 = 4,3 (4C); 8-9 = 8,3
+(8C); 10-11 = 5,3 (5C); 12-13 = 13,1 (KD); 14-15 = 2,0 (2H).
+
+**Second dump, after betting and dealing** -- checked against the user's
+own read of the real screen (dealer KD/2H, their own hand 7H/9C):
+
+- Deck cursor (slot 1467): **8** -- exactly 4 pairs consumed (3 seats +
+  dealer), matching the prediction table above.
+- Deck cards (slots 1363-1382 spot-checked): byte-identical to the first
+  dump -- direct proof the deck was never touched by the bet, only the
+  cursor advanced.
+- Seat 0 hand (slot 808+): 7,0 then 9,3 = **7H, 9C** -- matches the
+  user's real hand exactly.
+- Seat 1 hand (slot 868+): 13,0 then 4,3 = **KH, 4C** -- matches the
+  predicted deck[2..3] exactly.
+- Seat 3 hand (slot 988+): 8,3 then 5,3 = **8C, 5C** -- matches the
+  predicted deck[4..5] exactly.
+- Dealer hand (`Table.f_2`, slot 773+): 13,1 then 2,0 = **KD (hole),
+  2H (up)** -- matches both the predicted deck[6..7] AND the user's real
+  screen read exactly.
+- Seat 0's `f_7` (slot 805): **0 in dump 1, 1 in dump 2** -- the human's
+  own confirm, caught live, while seat 1/3's `f_7` stayed 1 the whole
+  time.
+- Seat 0's bankroll (slot 799): **400 -> 398**, exactly the $2 bet --
+  incidentally confirms `kSeatBankrollOffset`/`kSeatBetOffset` together.
+- `mySeat` via `f_9` (slot 23): **0 in both dumps**, consistent with
+  seat 0 being the human's real hand.
+
+**Result: every offset this feature touches -- `kSeatBetConfirmedOffset`
+(brand new this session), plus the reused `kSeatOccupiedOffset`,
+`kSeatBetOffset`, `kDeckCursorOffset`/`kDeckCountOffset`, `kTableSlot`,
+`kDealerHandOffset`, `kSeatHandsOffset` -- was correct on the FIRST live
+test.** No corrections needed, a rare clean pass for this project (compare
+Session 6, where the same kind of test needed 4 corrections). Promoted
+`kSeatBetConfirmedOffset` to CONFIRMED LIVE in `BlackjackCheat.cpp`.
+
+**Still open**: the two new Release+Debug icon positions (dealer's
+predicted 2 cards reusing the `HoleCardIconX/Y` slot, the player's
+reusing `NextCardIconBaseX/Y`) were not visually confirmed this pass --
+the user read the real screen and the raw dumps, not the on-screen icon
+layout. May still need the same kind of live Reload-Config retuning
+`HoleCardIconX` itself needed (0.821 -> 0.957) once actually looked at.
+
+### Second live-testing round (same session) -- two real bugs found, `ShowCardsBeforeBet` added
+
+Play continued (Debug build still deployed) and immediately surfaced
+exactly the "still open" item above, plus one more real bug:
+
+**Bug 1 -- the predicted own-hand icon never appeared.** The user
+confirmed this directly: "It's just showing the dealer's cards, not my
+cards." Root cause: `SimulatePreDeal()` required `seat.f_7` (bet
+CONFIRMED) for every seat including the human's own, matching
+`func_1057`'s real gate exactly -- but `func_1056` ALSO requires the
+human's own `f_7` before the table can leave state 0 to deal, so the
+real window where "my own `f_7` just flipped to 1 AND `dealerHand.count`
+is still 0" both hold is at most one script tick, often zero visible
+frames. The dealer's icon showed fine because it never depends on
+`mySeat` -- the first live-confirmation addendum above already showed
+both NPC seats confirm their bets well before the human even sees the
+bet prompt, so `preDeal.valid` was true for the entire deciding window;
+only the human-specific gate was ever starved for a visible frame.
+
+Checked PokerCheat's own opponent/community-card drawing
+(`DrawCommunityCardIcons()`/`DrawSeatCardIcons()` in `PokerCheat.cpp`) as
+the user asked, specifically to rule out a rendering-technique problem --
+it's architecturally identical to what this file already does
+(`DRAW_SPRITE` + `BuildCardTextureName()` + a streamed `card_set_N`
+dict, no header/config difference worth porting). Confirms the bug was
+never in HOW cards get drawn -- it was in WHEN this file decided a hand
+was safe to draw.
+
+**Fix**: `SimulatePreDeal()` now takes an explicit `mySeat` parameter and
+treats that one seat as "will play" the moment its bet AMOUNT (`f_4[0]`)
+is nonzero, without waiting for `f_7` -- the first live-confirmation
+addendum's own dump data already showed this field reads nonzero well
+before confirming (the bet slider's live value). Every OTHER seat still
+requires the real `f_7`, unchanged from before. This is a strictly more
+provisional guess for `mySeat` specifically (could show a hand that never
+gets dealt if the human backs their bet down to 0 without ever
+confirming) -- accepted tradeoff, since showing an occasionally premature
+preview during a window that otherwise showed NOTHING at all is the
+entire point of the feature.
+
+**Bug 2 -- a real dealer misprediction, caught on the very next round**:
+the user reported "It showed a 9S 10C but the dealer ended up having 2D
+5D." Root cause understood, NOT fully solvable in general: unlike the
+dealer draw-out prediction (`SimulateDealerOutcome()`, where the cursor
+only ever advances forward, making self-correction monotonic), this
+pre-deal prediction's seat-to-deck-index mapping can shift
+non-monotonically any time ANOTHER seat's bet confirms during the
+waiting phase -- any occupied seat, not just the human's, could in
+principle confirm right up against the same "last tick before dealing"
+edge Bug 1's fix addresses for the human specifically, and this file has
+no way to distinguish "no more seats are joining" from "one more seat is
+about to confirm" ahead of time.
+
+Rather than chase this further blind, added `ValidatePreDeal()` (right
+after `SimulatePreDeal()`) as an **instrument, not a fix** -- the same
+"PredictionCheck every round, no F10 needed" self-validation
+`UpdateDeckPrediction()` already does for the dealer draw-out. It now
+logs a per-seat + dealer MATCH/MISMATCH ("PreDealCheck" lines) every
+single round automatically, so future sessions can characterize how
+often/why this actually happens instead of relying on the user noticing
+by eye and reporting it manually (exactly what happened this time).
+
+**New feature, user request**: `Config::Values::ShowCardsBeforeBet`
+(Release+Debug, default true) -- a dedicated toggle for this specific
+feature, separate from `ShowDeckPrediction` (which now only ever governs
+the post-deal dealer-hole-card icon/"Next cards" row). Reasoning: this
+pre-bet prediction is a distinctly more provisional guess than anything
+else `ShowDeckPrediction` gates (see both bugs above), so the user should
+be able to turn it off independently. `Config.h`/`Config.cpp` updated the
+same way every prior toggle was (INI key `ShowCardsBeforeBet` under
+`[General]`).
+
+### Build/test status
+
+`BlackjackCheat.vcxproj` Debug compiled clean (0 warnings/errors) while
+RDR2.exe was still running for live testing -- deploy step correctly
+failed on the file lock both times the game was still open, succeeded
+once the user fully closed RDR2.exe. Confirmed via this session's own
+back-and-forth that ejecting a loaded ASI through the loader's own
+eject/reinject flow does NOT reliably release the OS file handle (two
+consecutive eject/reinject attempts still left the file locked) --
+closing the process is the only mechanism confirmed to work here. No
+pure-math header (`BlackjackHandEval.h`/`BlackjackDeckSim.h`) touched
+this session, so their test projects were not re-run.
+
+### Third live-testing round (same session) -- Bug 1's fix confirmed, a new sit-down-timing theory, and a deliberate simplification
+
+Redeployed the Bug 1/Bug 2/`ShowCardsBeforeBet` build above and kept
+playing.
+
+**Bug 1's fix confirmed live**: the user's own predicted hand appeared in
+the reused "Next cards" slot and matched their real dealt hand. The very
+same round's automatic `PreDealCheck` log line also came back clean:
+
+```
+PreDealCheck: dealer predicted=[ 10S QH ] actual=[ 10S QH ] MATCH
+PreDealCheck: seat 1 predicted=[ AS 8H ] actual=[ AS 8H ] MATCH
+PreDealCheck: seat 2 predicted=[ 3S 7H ] actual=[ 3S 7H ] MATCH
+PreDealCheck: seat 3 predicted=[ 2D 6H ] actual=[ 2D 6H ] MATCH
+```
+
+But the user separately reported the top-right predicted-DEALER icon
+(both cards, pre-deal) looked wrong on that same sit-down -- despite the
+log for that exact round showing a clean match. Reconciling the two: the
+log only captures the LAST snapshot right before the deal (by
+definition, the one that matters), but the user could easily have looked
+at an EARLIER, not-yet-settled snapshot -- and first-hand-after-sitting-
+down is specifically the highest-risk moment for that, since the human's
+own seat takes several real seconds to register (walk up + sit + place a
+first bet) versus NPCs, which the earlier addendum already showed
+confirm in a single tick. More time spent "unsettled" means more chance
+of eyeballing a guess before it self-corrects. On the very next hand
+(already seated, no sit-down delay), the user confirmed it displayed
+correctly -- consistent with this theory, though not yet proven by a
+dedicated stand-up/sit-back-down test.
+
+**Deliberate simplification (user directive): "Assume everyone at the
+table will be betting."** Rather than keep chasing the general race
+(any occupied seat's bet can in principle confirm late enough to shift
+the dealer's predicted index, as Bug 2 already showed), `SimulatePreDeal()`
+now gates purely on **occupancy** (`kSeatOccupiedOffset`) for every seat,
+human and NPC alike -- the `seat.f_7` (bet confirmed)/`seat.f_4[0]` (bet
+amount) checks, and the human-specific bypass Bug 1's fix added, are
+gone entirely. Rationale: in this minigame every seated player
+realistically does bet every round, so treating "occupied" as "will
+play" collapses both known races into one much smaller one (a seat's
+occupancy marker should register as soon as the seat is taken -- well
+before any bet-related field is even meaningful) at the cost of a known,
+accepted inaccuracy if a seat is ever occupied but genuinely sits a
+round out. `ValidatePreDeal()`'s existing "PreDealCheck" log line will
+surface that as a real MISMATCH automatically if it ever actually
+happens, rather than this file silently assuming it never does --
+exactly the kind of case that instrument exists to catch. `kSeatBetOffset`/
+`kSeatBetConfirmedOffset` remain valid, confirmed fields (Probe-only
+again, not read by `OnTick()`), not removed -- only this file's own
+gating logic changed.
+
+Rebuilt Debug (0 warnings/errors) while RDR2.exe was still running for
+live testing -- deploy step correctly failed on the file lock again,
+matching the established pattern; redeploy once the user closes the
+game. Not yet re-tested live as of this edit.
+
+### Fourth finding (same session) -- the real reason eject was hanging: `Log.h`'s async logger
+
+Separately from the deck-prediction work above, the user had been unable
+to get a build's eject/reinject cycle to actually release the `.asi`
+file handle across several attempts this session (see the "Build/test
+status" note a few sections up: two consecutive eject/reinject attempts
+still left the file locked, only a full RDR2.exe close ever worked). The
+user asked directly whether `Log.h`'s logging framework -- specifically,
+whether it keeps a thread alive -- could be the cause.
+
+It is. `Log::detail::GetLogger()` used `spdlog::create_async<...>`,
+which spawns spdlog's global thread pool (1 background worker thread).
+That worker's code is compiled directly into this DLL (spdlog is
+header-only, and nothing else in this project links it), so the thread
+is running code inside BlackjackCheat.asi's own mapped pages for as long
+as it's alive. Traced the actual mechanism in
+`external/spdlog/include/spdlog/details/thread_pool-inl.h`:
+`thread_pool::~thread_pool()` calls `t.join()` on that worker thread.
+That destructor runs when `GetLogger()`'s function-local static
+`logger` (the last shared_ptr keeping the pool alive) gets torn down
+during DLL unload -- i.e. from inside `DllMain`'s `DLL_PROCESS_DETACH`.
+Joining a thread from inside `DllMain` is a well-documented Windows
+deadlock trap: the OS loader lock is held for the entire call, and
+`main.cpp`'s own `DLL_PROCESS_DETACH` case (`scriptUnregister()` +
+`keyboardHandlerUnregister()`, no explicit `spdlog::shutdown()`) gave no
+indication this was even a risk until traced. This matches the observed
+symptom exactly -- not a crash, a silent HANG, which from the injector's
+side looks exactly like "eject just doesn't complete."
+
+**Fix, per explicit user direction ("ONLY for debug. Release should be
+async")**: `Log.h` now branches on `_DEBUG`. Debug uses
+`spdlog::basic_logger_mt<spdlog::synchronous_factory>(...)` -- a plain
+synchronous logger, no background thread pool at all, so there is
+nothing for `DLL_PROCESS_DETACH` to deadlock joining. Release keeps the
+original `spdlog::create_async<...>` unchanged, on the reasoning that
+Release loads once at game launch and is never hot-ejected during normal
+play, so it keeps the async logger's lower per-call overhead where the
+deadlock risk realistically never gets exercised. This project's own
+build-test-eject-reinject loop happens overwhelmingly against Debug
+(many times an hour), which is exactly where the fix now lives.
+
+**Caveat, explicitly not verified this session**: Release's own
+`DLL_PROCESS_DETACH` still happens at ordinary game exit (not just a
+manual eject) -- this session's hang was only ever observed via manual
+eject, never via closing RDR2.exe normally (which was the ONLY thing
+that reliably worked to unstick the file lock all session), so Release's
+same theoretical risk at normal process exit was never actually
+triggered or tested. Flagged as a real, if lower-probability, open
+question rather than assumed safe.
+
+**A second lesson from this same fix, unrelated to the logger itself**:
+Debug and Release both deploy to the SAME game folder via the shared
+`PostBuildEvent` (`E:\SteamLibrary\...\Red Dead Redemption 2`) -- building
+Release right after Debug during this session's verification silently
+overwrote the Debug `.asi` the user was mid-session live-testing with
+(F10 menu, `PreDealCheck` logging, all Debug-only). Caught and corrected
+by rebuilding Debug again immediately after, but worth remembering
+explicitly for any future session: **always redeploy Debug last if a
+Release verification build was needed mid-session**, since there's no
+separate deploy path to keep them from clobbering each other.
+
+### Build/test status (this addendum)
+
+Both `Debug` and `Release` rebuilt clean (0 warnings/errors) with
+RDR2.exe fully closed, both deployed successfully. Order was Debug,
+Release (for compile verification only), then Debug again to restore
+the user's actual live-testing build -- see the note directly above.
+Not yet live-tested whether this actually fixes the eject hang (the user
+had not attempted another eject/reinject cycle as of this edit).
+
+### Next live session priority (supersedes the priority list above)
+
+1. **Highest priority given this session's history**: actually try an
+   eject/reinject cycle again against the new Debug build and confirm it
+   no longer hangs -- this was the whole reason the fix above exists,
+   and hasn't been verified yet.
+2. Confirm the occupancy-only simplification actually fixes the
+   first-sit-down inaccuracy -- stand up and re-sit (cheaper than a full
+   game reload) specifically to reproduce a fresh "just occupied, nothing
+   else registered yet" moment, and check both the on-screen icon and the
+   `PreDealCheck` log line for that round.
+3. Watch for "PreDealCheck" MISMATCH lines across several rounds now that
+   the gate is occupancy-only -- in particular, does a seat that's
+   occupied but doesn't bet (if that's even possible in this minigame)
+   ever actually produce one?
+4. The two icon positions (reusing `HoleCardIconX/Y`/`NextCardIconBaseX/Y`)
+   still haven't been visually confirmed as sane -- first actual look at
+   the screen should say whether they need their own dedicated config
+   keys and a live-tuning pass.
+5. Eventually: if Release's own eject-time risk (see the caveat above)
+   ever needs closing off too, the same synchronous-logger swap is a
+   one-line change away, at the cost of the async logger's lower
+   per-call overhead in the shipped build.
+6. Backfill Sessions 7 and 8 into this journal (still not attempted, see
+   the earlier note in this same session's entry).
+
+### Fifth finding (same session) -- eject fix confirmed live, then a real correctness bug in the advice engine
+
+The eject fix above was tested live: with the new Debug build deployed,
+the user injected then ejected while RDR2.exe stayed open, and a
+subsequent `MSBuild` deploy attempt succeeded (`1 file(s) copied` for
+both `.asi` and `.pdb`) -- the FIRST time this session an eject actually
+released the file lock without closing the game. Confirms the
+synchronous-logger fix worked.
+
+Play continued and surfaced two more real issues, addressed in priority
+order (the user explicitly flagged the second as more urgent mid-report):
+
+**Issue A (lower priority, addressed second) -- the pre-deal prediction
+was showing up while the PREVIOUS round's dealer draw-out was still
+visually playing.** Root cause: exactly the same "script state resets
+before the animation finishes" mechanism the very first Session 9
+finding already traced (func_718 case 0 resets `Table.f_2`/reshuffles
+the deck on the FIRST script tick after a round ends), but never
+previously connected to a visible symptom -- the real "dealer collects
+cards" animation (`func_1049`) plays out over several more real seconds,
+completely decoupled from that already-updated state, so
+`dealerHand.count` reads 0 well before the table visually finishes
+showing the OLD round. `SimulatePreDeal()`, gated purely on that single
+tick's read, had no way to distinguish "genuinely between rounds" from
+"state already reset, animation still catching up".
+
+Fix: `IsPreDealSettled()` (`BlackjackCheat.cpp`, right after
+`ValidatePreDeal()`) requires `dealerHand.count==0` to persist for a
+minimum REAL time (`std::chrono::steady_clock`, not a tick count --
+frame rate isn't fixed) before the prediction is trusted. New config
+field `Config::Values::PreDealSettleDelaySeconds` (Release+Debug,
+default 1.5s) -- a heuristic guess at how long that animation typically
+takes, not a traced fact, explicitly flagged as likely needing its own
+live-tuning pass the same way `HoleCardIconX` did (0.821 -> 0.957).
+
+**Issue B (higher priority, the user's explicit "New issue" interrupt)
+-- a hard 9 (5,4 -- mathematically cannot bust on any single card) was
+advised Stand.** Traced the exact mechanism in
+`BlackjackDeckSim::DetermineCheatAction()`: the dealer showed a hand
+that needed to hit, and the very next undrawn deck card would have
+busted it. Standing denies the player nothing (the dealer draws that
+exact card next and busts, an automatic win regardless of the player's
+own low total) -- but hitting would consume that SAME card for the
+player instead, letting the dealer draw a safe card afterward and beat
+the player's now-higher-but-still-losing total. This is a real,
+mathematically correct insight -- but ONLY if nothing else can draw
+between this hand and the dealer's turn. It wasn't true that round:
+another occupied seat still had to act first, meaning the "dealer's very
+next card" the engine assumed was actually going to be consumed by that
+OTHER seat's real hits, not handed straight to the dealer. This is
+precisely the caveat `BlackjackDeckSim.h`'s own header comment already
+documented ("if another occupied seat still has to act before the
+dealer, their real hits will shift the cursor by an amount this function
+can't predict") -- documented as a risk, never previously checked as a
+precondition.
+
+Fix: `DetermineCheatAction()` gained a new required parameter,
+`isLastSeatBeforeDealer`. When false, the function no longer trusts ANY
+of its own dealer-outcome simulation (not just the specific denial case
+above -- every `extraHits` candidate's dealer comparison shares the same
+broken premise) and defers entirely to
+`BlackjackHandEval::GetBasicStrategyAction()` -- the same textbook
+fallback this file already used for Split, now extended to Hit/Stand/
+Double too. `BlackjackCheat.cpp`'s `DrawOverlay()` computes this per-tick,
+per-seat: turn order is strictly ascending seat 0->1->2->3 then the
+dealer (Session 5), so "is mySeat last to act before the dealer" is
+simply "is any HIGHER-indexed seat occupied" -- a single scan over
+`kSeatOccupiedOffset` for seats above `mySeat`.
+
+New regression test, `TestHardNineDeniedDealerBust`
+(`tests/BlackjackDeckSimTests.cpp`), reproduces the exact bug shape:
+dealer at 16 with a bust card (6) at the front of a long future-card
+array of otherwise-harmless 4s. Asserts BOTH halves of the fix: with
+`isLastSeatBeforeDealer=true`, Stand is still the mathematically correct
+answer (proves the ORIGINAL insight wasn't wrong, just misapplied); with
+`isLastSeatBeforeDealer=false`, the same hand now correctly falls back
+to basic strategy's Double (hard 9 vs. dealer up-card 6, `canDouble`
+true) or Hit (`canDouble` false) -- never Stand. All 12 checks in the
+suite pass (9 previous + 3 new).
+
+### Build/test status (this addendum)
+
+`BlackjackCheat.vcxproj` Debug compiled clean (0 warnings/errors);
+deploy correctly failed on the file lock while the mod was still
+injected for live testing (expected, not re-tested against the new
+build yet). `tests/BlackjackDeckSimTests.vcxproj` rebuilt and re-run:
+12/12 pass. `tests/BlackjackHandEvalTests.exe` re-run unchanged: still
+31/31 (no header touched). Release not rebuilt this addendum.
+
+### Next live session priority (supersedes the priority list above)
+
+1. **Highest priority**: confirm the hard-9-Stand bug is actually fixed
+   live -- watch for a similar low-total hand while another seat is
+   still occupied and due to act, and confirm the advice is now Hit/
+   Double, never Stand, in that situation specifically.
+2. Confirm `IsPreDealSettled()`'s 1.5s guess is in the right ballpark --
+   does the pre-deal prediction now wait until the real table has
+   visually finished the previous round before appearing? Too short
+   still shows it early; too long delays a real feature for no reason.
+   Tune `PreDealSettleDelaySeconds` via Reload Config if not.
+3. Confirm the occupancy-only pre-deal simplification actually fixes the
+   first-sit-down inaccuracy (carried over from before this addendum,
+   not yet re-tested).
+4. Watch for "PreDealCheck" MISMATCH lines across several rounds.
+5. The two icon positions (reusing `HoleCardIconX/Y`/`NextCardIconBaseX/Y`)
+   still haven't been visually confirmed as sane.
+6. Backfill Sessions 7 and 8 into this journal (still not attempted).
+
+### Sixth finding (same session) -- `IsPreDealSettled()`'s time debounce did NOT fix Issue A; added a real diagnostic instead of guessing again
+
+Deployed the settle-delay build above; the user reported the pre-deal
+prediction was STILL showing during the previous round's conclusion.
+Rather than blindly try a longer delay, the user asked directly whether
+some kind of table state could be checked instead -- the same request
+this session's very first trace already answered once (`Table.f_580`,
+`func_718`'s own round-phase state variable) but never actually wired
+into this codebase as a live-readable field.
+
+Added `kTableStateOffset = 580` (`BlackjackCheat.cpp`) and exposed it in
+two places: an always-visible Debug panel line ("Table state (f_580,
+diagnostic): N settled=yes/no") and a new log line in
+`ProbeTableStruct()`. Explicitly flagged as **STATIC TRACE ONLY, not yet
+live-confirmed** -- it reuses the same `kTableSlot` base already
+confirmed correct for 3 independent other fields (`f_2`/`f_27`/`f_592`),
+which is reasonable evidence by analogy, but the specific relative
+offset (580) itself has never been checked against real memory.
+
+**Also flagged, not yet resolved**: per the file header's own Session 9
+trace, `func_718`'s switch has NO intermediate "still collecting
+cards"/"still animating" state -- case 8 (dealer draw-out) and case 9
+both jump straight to state 0 in the same tick the round ends, and state
+0 is also where the reshuffle and the waiting-for-next-bet loop both
+live. If that trace is right, `f_580` reading 0 won't actually
+distinguish "just ended, animation still playing" from "genuinely
+waiting for a bet" any better than `dealerHand.count==0` already did --
+this diagnostic exists specifically to find out whether that's true, not
+because it's assumed to be the fix. This is being added FOR live
+observation, not as a claimed solution -- the honest position given two
+guesses (the seat-timing race, then a 1.5s debounce) that didn't fully
+solve Issue A on their own.
+
+### Build/test status (this addendum)
+
+`BlackjackCheat.vcxproj` Debug compiled clean (0 warnings/errors);
+deploy failed on the file lock while the mod was still injected
+(expected, not yet redeployed as of this edit).
+
+### Next live session priority (supersedes the priority list above)
+
+1. **Highest priority**: watch the Debug panel's new "Table state
+   (f_580)" line across a full round, specifically during the window
+   where the pre-deal prediction incorrectly shows -- what value does it
+   read? If it's already 0 during that window (as the file header's own
+   trace predicts), `f_580` alone won't solve Issue A and a genuinely
+   different signal is needed (or the animation-length guess needs
+   fixing some other way). If it reads something OTHER than 0 during
+   that window, this directly contradicts the existing case-8/9 trace
+   and is a real, useful correction to make.
+2. Confirm the hard-9-Stand fix and the occupancy-only pre-deal
+   simplification, both still not re-tested live as of this addendum.
+3. Watch for "PreDealCheck" MISMATCH lines across several rounds.
+4. The two icon positions still haven't been visually confirmed as sane.
+5. Backfill Sessions 7 and 8 into this journal (still not attempted).
+
+### Seventh finding (same session) -- Issue A actually solved: `f_580` was off by one, the real field is `f_581`
+
+The user watched the new diagnostic live and reported exactly the
+answer priority item 1 above asked for: the field reads **1** right
+after the round concludes and **0** specifically once genuinely at the
+betting phase -- the opposite of what the existing case-8/9 trace
+predicted for `f_580` itself. Rather than just trust the correlation,
+the user pushed back with the right question: could this be the same
+kind of off-by-one this project has hit before, or a genuinely different
+field?
+
+Checked properly this time instead of trusting the live correlation
+blind:
+- `func_1047` (line ~35146) -- confirmed it really does do
+  `uParam0->f_580 = iParam1`, exactly as assumed; the switch case labels
+  (case 8/9 calling `func_1047(uParam0, 0)`) are unambiguous in the
+  source. So the CONTRADICTION was real, not a misreading of the switch.
+- `func_1049` (line ~35164, called from case 0 with token `1` -- the
+  call this file always described as "kicks off a retrieve-bets/payout
+  animation" but never actually opened) -- turned out to write
+  **`f_581`**, not `f_580`: `if (iParam1==0) return; f_581 = iParam1;`.
+- `func_272` (line ~12696, the outer per-tick driver) only even calls
+  `func_718` -- the ENTIRE round-phase state machine -- when
+  `f_581 == 0`: `if (uParam0->f_581 == 0) { if (func_718(uParam0)) {...} }`.
+  So while `f_581` is nonzero, `f_580` (and everything else func_718
+  would otherwise update) stays frozen exactly where case 8/9 left it.
+- `func_354` (line ~14657) is the release: it clears `f_581` back to 0
+  ONLY if the caller's token matches the CURRENT lock value (a
+  token-guarded unlock so one animation's completion can't accidentally
+  release a different one's lock).
+
+This is a genuine off-by-one (`kTableStateOffset=580` was reading the
+wrong word), same class of bug as `kTableFieldOffset`/`kSeatHandsOffset`
+before it -- but a lucky one: `f_581` is a real, explicit "table is
+paused for an animation" lock, a BETTER signal for this exact purpose
+than the raw switch-case index would even have been. Renamed to
+`kTableAnimationLockOffset = 581`, rated CONFIRMED LIVE (the live
+behavior the user reported was real; this file's own understanding of
+which absolute slot it was reading was wrong).
+
+**Fix applied**: `IsPreDealSettled()`'s 1.5s time-guess (Session 9 fourth
+addendum) is REMOVED entirely, replaced by `IsAtBettingPhase()` -- a
+direct read of `f_581 == 0`, no timing heuristic at all.
+`Config::Values::PreDealSettleDelaySeconds` removed along with it
+(`Config.h`/`.cpp`). The Debug panel's diagnostic line now shows
+"Table animation lock (f_581): N atBettingPhase=yes/no" instead of the
+old "Table state (f_580)" line, and `ProbeTableStruct()`'s log line was
+updated the same way.
+
+### Build/test status (this addendum)
+
+`BlackjackCheat.vcxproj` Debug compiled clean (0 warnings/errors);
+deploy failed on the file lock while the mod was still injected
+(expected, not yet redeployed as of this edit). No pure-math header
+touched, test projects not re-run.
+
+### Eighth finding (same session) -- the f_581 theory was wrong; reverted to f_580, empirically
+
+The `f_581` animation-lock explanation (previous finding) was deployed
+and immediately falsified live: the user reported it reads a **constant
+1**, never toggling, regardless of round phase -- not the real signal at
+all, despite the clean-looking `func_1049`/`func_272`/`func_354`
+mechanism that seemed to explain it. Reverted `kTableAnimationLockOffset`
+back to 580 on the user's explicit direction ("Go back to 580 and just
+check for 1"), trusting the ORIGINAL direct live observation (reads 1
+while the previous round is still resolving, 0 once genuinely at the
+bet-placing phase) over both theories tried so far.
+
+`IsAtBettingPhase()`'s own logic (`ReadInt(...) == 0`) didn't need to
+change -- only the offset constant did, plus the header comments that
+had confidently narrated the (wrong) `f_581` mechanism. This field's
+real identity/mechanism remains genuinely unexplained -- not re-derived
+this session. Rather than keep guessing at WHY it works, this file now
+explicitly documents it as empirical: gate on the observed 1->0
+transition, full stop, same "trust the live probe over the clean-looking
+static theory" precedent this project already follows for `kMySeatSlot`.
+
+**A real methodology lesson worth naming plainly**: this offset was
+"confirmed" and then un-confirmed TWICE in one session (580 as
+switch-case index -- wrong; 581 as animation lock -- also wrong; back to
+580 as an unexplained empirical signal -- what actually survived contact
+with live testing). Neither wrong theory was a wasted detour exactly --
+each was falsifiable and got falsified fast -- but it's a concrete
+demonstration of why this project's own confidence-rating discipline
+(STATIC TRACE ONLY vs. CONFIRMED LIVE) exists: a theory that reads
+cleanly in the decompile is not the same claim as a value a live probe
+actually confirms, and this offset still isn't the latter yet either --
+it's "empirically works, mechanism unknown," a third, distinct category
+worth naming honestly rather than dressing up as either of the other two.
+
+Rebuilt Debug: compiled clean, deployed successfully on the first try
+(the file was already unlocked -- no eject needed this time).
+`tests/BlackjackDeckSimTests.vcxproj` also rebuilt and re-run against
+the externally-updated `BlackjackDeckSim.h` (see that header's own
+Session 10 addendum for two more live bug fixes -- a known bust card now
+overrides the isLastSeatBeforeDealer fallback, and an already-pat dealer
+is trusted regardless of other seats -- made outside this journal entry,
+not authored by this session): 16/16 pass (14 previous + 2 new).
+
+### Next live session priority (supersedes the priority list above)
+
+1. **Highest priority**: confirm the reverted `f_580` check actually
+   fixes Issue A live -- does the pre-deal prediction now stay hidden
+   through the entire previous round's conclusion and only appear once
+   genuinely at the bet-placing phase?
+2. If it does work but the mechanism still nags at someone: a proper
+   re-derivation would mean a differential stack dump (before/after
+   round conclusion) scanning a window around slot `kTableSlot+580` for
+   what ELSE might explain a clean 1->0 transition -- not attempted this
+   session, this fix shipped on trusted live observation alone.
+3. Confirm the hard-9-Stand fix (Session 9 fifth finding), the
+   Session 10 DeckSim fixes, and the occupancy-only pre-deal
+   simplification -- none re-tested live as of this addendum.
+4. Watch for "PreDealCheck" MISMATCH lines across several rounds.
+5. The two icon positions still haven't been visually confirmed as sane.
+6. Backfill Sessions 7 and 8 into this journal (still not attempted).

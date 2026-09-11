@@ -188,15 +188,22 @@ PokerCheat/CollectorOffline).
 - `src/scriptmenu.h/.cpp`, `src/keyboard.h/.cpp` -- vendored unchanged from
   PokerCheat (itself adapted from the ScriptHookRDR2 SDK's NativeTrainer
   sample).
-- `src/Log.h` -- async, thread-safe file logger (`BlackjackCheat.log`)
-  built on spdlog (`external\spdlog`, a real git submodule -- see
-  "External resources" below). `Log::Write` takes `std::format`-style
-  `{}` placeholders (compile-time checked), not printf's `%d`/`%s`.
-  Replaced an earlier hand-rolled version that reopened the file with
+- `src/Log.h` -- thread-safe file logger (`BlackjackCheat.log`) built on
+  spdlog (`external\spdlog`, a real git submodule -- see "External
+  resources" below). `Log::Write` takes `std::format`-style `{}`
+  placeholders (compile-time checked), not printf's `%d`/`%s`. Replaced
+  an earlier hand-rolled version that reopened the file with
   `fopen_s`/`fclose` on every call (synchronous, and not safe against
-  concurrent callers) -- see that header's own header comment for the
-  full design, including the one DllMain-timing tradeoff worth watching
-  on first load after this change.
+  concurrent callers). Debug uses a plain SYNCHRONOUS spdlog logger;
+  Release uses spdlog's ASYNC logger (1 background thread) -- this split
+  is deliberate, not a placeholder: a live eject/reinject hang was traced
+  to the async thread pool's destructor joining its worker thread from
+  inside `DLL_PROCESS_DETACH` (a well-known Windows deadlock trap), which
+  this project's Debug-heavy build-eject-reinject workflow hits
+  constantly and Release effectively never does -- see that header's own
+  header comment and `docs/JOURNAL.md`'s Session 9 fourth finding for the
+  full mechanism and the one open caveat (Release's own risk at ordinary
+  game-exit DLL_PROCESS_DETACH, not yet tested).
 - `src/GamePointers.h/.cpp`, `src/PatternScan.h/.cpp` -- generic
   scrThread-pool resolution / AOB pattern scanning, vendored unchanged
   from PokerCheat (nothing poker- or blackjack-specific in either file).

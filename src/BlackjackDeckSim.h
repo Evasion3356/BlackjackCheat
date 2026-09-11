@@ -45,13 +45,71 @@
 // BlackjackHandEval.h/BlackjackCardCounting.h's own game-memory-free
 // design) is what makes it testable at all.
 //
-// Split is deliberately NOT handled by this header -- BlackjackCheat.cpp
-// still asks BlackjackHandEval::GetBasicStrategyAction() for the
-// split/no-split call (the textbook pair chart) before ever calling
-// DetermineCheatAction() below. A genuinely deck-derived split decision
-// would need to simulate both resulting hands' own draw-outs plus the
-// dealer's, which is real additional work not attempted this pass --
-// flagged as a known scope limit, not a silent gap.
+// Session 11 addendum -- Split is now ALSO deck-derived, via
+// EvaluateSplit() below. It had been deliberately left to
+// BlackjackHandEval::GetBasicStrategyAction()'s blind textbook chart
+// (see the paragraph this replaces, kept here for history: "would need
+// to simulate both resulting hands' own draw-outs plus the dealer's,
+// which is real additional work not attempted this pass"), which is
+// exactly what produced a live bug report: J,J (a hard 20) was advised
+// Stand because the textbook chart hard-codes "never split tens" --
+// correct advice against an UNKNOWN next card, but the known next three
+// cards that round were an Ace then a 2 then a 7, meaning splitting
+// actually produced a 21 (J,A) and, after one more known hit, a 19
+// (J,2,7) -- worth more in total bet-unit profit than standing pat on a
+// single 20, if the dealer's own hand doesn't beat both. EvaluateSplit()
+// answers this exactly the same way DetermineCheatAction() answers
+// hit/stand/double: simulate every card that's actually going to be
+// dealt (both post-split hands' one guaranteed card, then each hand
+// played out via DetermineCheatAction()'s own advice to its own
+// conclusion, then the dealer's real draw-out) and compare the summed
+// result, in bet-unit terms (Win=+1/Push=0/Loss=-1 per hand), against
+// just playing the pair as one ordinary hand. Same trustworthiness
+// precondition as DetermineCheatAction() (isLastSeatBeforeDealer OR the
+// dealer's already-dealt hand is already 17+) -- when that doesn't
+// hold, the caller must fall back to the textbook pair chart instead,
+// same convention as everywhere else in this file. See
+// tests/BlackjackDeckSimTests.cpp's "known cards make splitting tens
+// correct" case, built directly from this bug report.
+//
+// Session 9 addendum -- isLastSeatBeforeDealer added after a second live
+// bug report: a hard 9 (bust-proof no matter what) was advised Stand.
+// Root cause was the ALREADY-documented "another occupied seat can shift
+// the cursor" caveat above actually manifesting: this function's dealer
+// simulation always assumed the very next undrawn card goes straight to
+// the dealer, and correctly noticed that STANDING would let the dealer
+// draw a card that happened to bust them -- a mathematically real
+// insight, but only true if nothing else draws in between. It wasn't
+// true that round. What was a documented risk is now an explicit,
+// checked precondition: DetermineCheatAction() no longer trusts its own
+// simulation at all when another occupied seat still has to act first,
+// falling back to BlackjackHandEval::GetBasicStrategyAction() instead --
+// see that parameter's own inline comment on DetermineCheatAction()
+// below for the full mechanism, and
+// tests/BlackjackDeckSimTests.cpp's "hard 9 denied dealer bust" case for
+// the regression test built from this exact bug shape.
+//
+// Session 10 addendum -- the isLastSeatBeforeDealer fallback above was
+// itself too blunt and caused two more live bug reports. (1) Hard 12
+// (K,2) with a known next card of King (a certain bust) was advised Hit:
+// once another seat forced the fallback to plain textbook strategy, the
+// known top-of-deck card was thrown away entirely, even though it's
+// THIS hand's own turn right now -- nothing else can draw before this
+// hand's own hit does, so the very next card is exact regardless of
+// what any later seat or the dealer does afterward. (2) A hard 19
+// against a dealer already showing 20 with a known next card of 2 (an
+// outright double to 21) was advised Stand: the dealer's hand was
+// already fully known and already >=17, meaning it was never going to
+// draw a card at all -- another seat's interference is irrelevant to a
+// dealer who already stands pat, so the fallback triggered for no
+// reason. Both fixed below: dealerOutcomeTrustworthy now also holds
+// whenever the dealer's already-dealt hand alone is already >=17 (no
+// draw needed, so nothing downstream can invalidate the comparison),
+// and even inside the fallback, a known immediate next card that would
+// bust this hand overrides Hit/Double to Stand -- the one piece of
+// certainty the fallback can always still use. See
+// tests/BlackjackDeckSimTests.cpp's "known bust card overrides fallback"
+// and "dealer already pat trusts sim regardless of other seats" cases.
 
 #include "BlackjackHandEval.h"
 
@@ -135,24 +193,90 @@ namespace BlackjackDeckSim
 	// an action after a split-Ace hand's single forced card -- see
 	// BlackjackHandEval.h's own header comment).
 	//
-	// Caveat this inherits from SimulateDealerFromRanks() and does NOT
-	// solve: if another occupied seat still has to act before the dealer,
-	// their real hits will shift the cursor by an amount this function
-	// can't predict (this project deliberately never ported bjack_sp's own
-	// ~1860-line AI decision table, func_623 -- see BlackjackCheat.cpp's
-	// file header, Session 5 addendum) -- so the simulated dealer hand
-	// this compares against is exact once this is the last seat left to
-	// act before the dealer, and a "what if nobody else draws" provisional
-	// guess otherwise, exactly like the mod's own "Predicted dealer draws"
-	// HUD line already is.
+	// Caveat this inherits from SimulateDealerFromRanks() -- SOLVED below
+	// via `isLastSeatBeforeDealer`, not just documented: if another
+	// occupied seat still has to act before the dealer, their real hits
+	// will shift the cursor by an amount this function can't predict
+	// (this project deliberately never ported bjack_sp's own ~1860-line
+	// AI decision table, func_623 -- see BlackjackCheat.cpp's file
+	// header, Session 5 addendum), so the simulated dealer hand this
+	// compares against is exact ONLY once this is the last seat left to
+	// act before the dealer.
+	//
+	// A real, live-reported bug caught what happens when that isn't true
+	// but this function trusts the simulation anyway: hard 9 (5,4)
+	// against a dealer showing a hand that needs to hit, where the very
+	// next undrawn card would bust the dealer -- this function correctly
+	// noticed that STANDING denies the player nothing (dealer draws that
+	// exact card next and busts) while HITTING would consume that exact
+	// card for the player instead, letting the dealer draw a SAFE card
+	// afterward and beat the player's own low total -- and so recommended
+	// Stand on a hand that can mathematically never bust, which is
+	// correct ONLY if nothing else can draw between this hand and the
+	// dealer. The user was NOT last to act that round -- another occupied
+	// seat still had to play first, meaning the "dealer's next card" this
+	// function assumed was actually going to be consumed by that OTHER
+	// seat's real hits, not handed straight to the dealer -- so the
+	// entire "denying the dealer their bust card" premise was built on a
+	// future that was never going to happen. `isLastSeatBeforeDealer`
+	// makes this an explicit, checked precondition instead of a silent
+	// assumption: when false, this function no longer trusts ANY of its
+	// own dealer-outcome simulation (not just the specific denial case
+	// above -- every extraHits candidate's dealer comparison shares the
+	// exact same broken premise) and instead defers entirely to
+	// BlackjackHandEval::GetBasicStrategyAction() -- the same textbook
+	// fallback this file already used for Split (see this file's own
+	// header comment above), now extended to Hit/Stand/Double too. The
+	// dealer's up-card rank for that fallback is read as `dealerRanks[1]`
+	// -- the real, visible up card, per the [hole, up] ordering
+	// BlackjackCheat.cpp's own callers already use (Session 7) -- with a
+	// defensive fallback to `dealerRanks[0]` if dealerCount is somehow
+	// under 2 (shouldn't happen in practice; this function is never
+	// called before the dealer has its own 2 cards).
 	inline BlackjackHandEval::Action DetermineCheatAction(
 		const std::int32_t* playerRanks, std::int32_t playerCount,
 		const std::int32_t* dealerRanks, std::int32_t dealerCount,
 		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDouble, bool isSplitAceHand)
+		bool canDouble, bool isSplitAceHand, bool isLastSeatBeforeDealer)
 	{
 		if (isSplitAceHand)
 			return BlackjackHandEval::Action::Stand;
+
+		// The dealer's own hand is already fully known (hole card
+		// included) -- if it's already 17+ it stands pat and never
+		// touches the future deck at all, so the simulation below is
+		// exact regardless of any other seat still left to act. Only a
+		// dealer who still needs to hit is actually at risk from another
+		// seat's real draws shifting the cursor first.
+		BlackjackHandEval::HandValue dealerKnown = BlackjackHandEval::EvaluateHand(dealerRanks, dealerCount);
+		bool dealerOutcomeTrustworthy = isLastSeatBeforeDealer || dealerKnown.total >= 17;
+
+		if (!dealerOutcomeTrustworthy)
+		{
+			std::int32_t dealerUpcardRank = dealerCount >= 2 ? dealerRanks[1] : dealerRanks[0];
+			BlackjackHandEval::Action fallback = BlackjackHandEval::GetBasicStrategyAction(playerRanks, playerCount, dealerUpcardRank, canDouble, /*canSplit*/ false, isSplitAceHand);
+
+			// One piece of the deck is still exact even here: it's this
+			// hand's own turn right now, so the very next undrawn card is
+			// guaranteed to be what THIS hand draws if it hits/doubles --
+			// nothing else can get to it first. Basic strategy is blind
+			// to that card by design; never let it recommend drawing a
+			// card already known to bust us.
+			if ((fallback == BlackjackHandEval::Action::Hit || fallback == BlackjackHandEval::Action::Double) && futureCount > 0 && playerCount < kHandMaxCards)
+			{
+				std::int32_t ranks[kHandMaxCards];
+				std::int32_t count = playerCount;
+				for (std::int32_t i = 0; i < count; i++)
+					ranks[i] = playerRanks[i];
+				ranks[count] = futureRanks[0];
+				count++;
+
+				if (BlackjackHandEval::EvaluateHand(ranks, count).bust)
+					return BlackjackHandEval::Action::Stand;
+			}
+
+			return fallback;
+		}
 
 		std::int32_t ranks[kHandMaxCards];
 		std::int32_t count = playerCount;
@@ -204,5 +328,143 @@ namespace BlackjackDeckSim
 			return BlackjackHandEval::Action::Double;
 
 		return BlackjackHandEval::Action::Hit;
+	}
+
+	// +1/0/-1 bet-unit value of an outcome -- lets EvaluateSplit() below
+	// compare "one hand" against "two hands, each its own bet" on a
+	// common scale instead of just comparing win/loss/push categories,
+	// which would treat "stand pat and win 1 unit" and "split into two
+	// winning hands, +2 units" as an indistinguishable tie.
+	inline std::int32_t OutcomeValue(Outcome outcome)
+	{
+		return outcome == Outcome::Win ? 1 : (outcome == Outcome::Loss ? -1 : 0);
+	}
+
+	struct PlayoutResult
+	{
+		BlackjackHandEval::HandValue value;
+		std::int32_t consumed = 0; // cards actually drawn from futureRanks
+	};
+
+	// Plays a hand to its own conclusion by repeatedly asking
+	// DetermineCheatAction() what it would do and applying that action,
+	// consuming real future cards as it goes -- "what actually happens
+	// if this hand follows the engine's own advice." Used by
+	// EvaluateSplit() below for each of the two post-split hands (and
+	// for the pair played as a single ordinary hand, its "don't split"
+	// baseline). isLastSeatBeforeDealer here means "is nothing else
+	// still going to draw between the END of this specific hand and the
+	// dealer" -- for a post-split hand 1, that's always false (hand 2 is
+	// still to come); the caller is responsible for passing the right
+	// value per hand, same as DetermineCheatAction() itself never
+	// assumes it.
+	inline PlayoutResult PlayHandOut(
+		const std::int32_t* startRanks, std::int32_t startCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDouble, bool isLastSeatBeforeDealer)
+	{
+		std::int32_t ranks[kHandMaxCards];
+		std::int32_t count = startCount > kHandMaxCards ? kHandMaxCards : startCount;
+		for (std::int32_t i = 0; i < count; i++)
+			ranks[i] = startRanks[i];
+
+		PlayoutResult result;
+		result.value = BlackjackHandEval::EvaluateHand(ranks, count);
+
+		while (!result.value.bust && count < kHandMaxCards && result.consumed < futureCount)
+		{
+			BlackjackHandEval::Action action = DetermineCheatAction(ranks, count, dealerRanks, dealerCount,
+				futureRanks + result.consumed, futureCount - result.consumed, canDouble, /*isSplitAceHand*/ false, isLastSeatBeforeDealer);
+
+			if (action == BlackjackHandEval::Action::Stand)
+				break;
+
+			ranks[count] = futureRanks[result.consumed];
+			count++;
+			result.consumed++;
+			result.value = BlackjackHandEval::EvaluateHand(ranks, count);
+
+			if (action == BlackjackHandEval::Action::Double)
+				break; // exactly one card, then forced stand
+		}
+
+		return result;
+	}
+
+	struct SplitDecision
+	{
+		bool trustworthy = false; // false means the caller must fall back to the textbook pair chart instead of trusting shouldSplit
+		bool shouldSplit = false;
+	};
+
+	// See this file's own header comment (Session 11 addendum) for the
+	// full derivation and the live bug this fixes. playerRanks[0]/[1]
+	// are the matching pair being considered (caller has already
+	// confirmed the rank match and that splitting is legal here);
+	// dealerRanks/dealerCount is the dealer's own already-dealt hand;
+	// futureRanks/futureCount is the exact undrawn deck from the LIVE
+	// cursor. canDoubleAfterSplit is the same double-legality flag the
+	// caller already computes for the pair itself (card-count +
+	// bankroll) -- this project doesn't model a separate, larger
+	// bankroll requirement for affording a double on EACH of two split
+	// hands; a known simplification, not a silent one.
+	inline SplitDecision EvaluateSplit(
+		const std::int32_t* playerRanks, std::int32_t playerCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDoubleAfterSplit, bool isLastSeatBeforeDealer)
+	{
+		SplitDecision result;
+
+		if (playerCount != 2 || futureCount < 2)
+			return result;
+
+		BlackjackHandEval::HandValue dealerKnown = BlackjackHandEval::EvaluateHand(dealerRanks, dealerCount);
+		bool dealerOutcomeTrustworthy = isLastSeatBeforeDealer || dealerKnown.total >= 17;
+		if (!dealerOutcomeTrustworthy)
+			return result;
+
+		std::int32_t pairRank = playerRanks[0];
+
+		// Value of NOT splitting: play the pair as one ordinary hand.
+		PlayoutResult noSplit = PlayHandOut(playerRanks, 2, dealerRanks, dealerCount, futureRanks, futureCount, canDoubleAfterSplit, isLastSeatBeforeDealer);
+		DealerSimResult dealerForNoSplit = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + noSplit.consumed, futureCount - noSplit.consumed);
+		std::int32_t noSplitValue = OutcomeValue(CompareOutcome(noSplit.value, dealerForNoSplit.value));
+
+		// Value of splitting: both new hands get their one guaranteed
+		// card immediately (future[0] then future[1], per bjack_sp's own
+		// split-dealing order -- see BlackjackHandEval.h's Ace-split
+		// header comment), THEN each plays out in turn (hand 1 first,
+		// hand 2 second). A split pair of Aces is forced to stand on
+		// that one dealt card with no further play at all (the same
+		// rule DetermineCheatAction()'s isSplitAceHand handles) rather
+		// than being run through PlayHandOut(), which would otherwise
+		// describe hits the game never actually offers.
+		bool isAcePair = (pairRank == 14);
+		std::int32_t hand1Start[2] = { pairRank, futureRanks[0] };
+		std::int32_t hand2Start[2] = { pairRank, futureRanks[1] };
+
+		PlayoutResult hand1;
+		if (isAcePair)
+			hand1.value = BlackjackHandEval::EvaluateHand(hand1Start, 2);
+		else
+			hand1 = PlayHandOut(hand1Start, 2, dealerRanks, dealerCount, futureRanks + 2, futureCount - 2, canDoubleAfterSplit, /*isLastSeatBeforeDealer*/ false);
+
+		std::int32_t hand2FutureOffset = 2 + hand1.consumed;
+		PlayoutResult hand2;
+		if (isAcePair)
+			hand2.value = BlackjackHandEval::EvaluateHand(hand2Start, 2);
+		else
+			hand2 = PlayHandOut(hand2Start, 2, dealerRanks, dealerCount, futureRanks + hand2FutureOffset, futureCount - hand2FutureOffset, canDoubleAfterSplit, isLastSeatBeforeDealer);
+
+		std::int32_t dealerFutureOffset = hand2FutureOffset + hand2.consumed;
+		DealerSimResult dealerForSplit = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + dealerFutureOffset, futureCount - dealerFutureOffset);
+
+		std::int32_t splitValue = OutcomeValue(CompareOutcome(hand1.value, dealerForSplit.value)) + OutcomeValue(CompareOutcome(hand2.value, dealerForSplit.value));
+
+		result.trustworthy = true;
+		result.shouldSplit = splitValue > noSplitValue;
+		return result;
 	}
 }

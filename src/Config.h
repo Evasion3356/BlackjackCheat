@@ -25,6 +25,7 @@ namespace Config
 		bool ShowDealerHand = true;
 		bool ShowAdvice = true;         // hit/stand/double/split AND insurance -- see BlackjackCheat.cpp's DrawInsuranceStatus() call site
 		bool ShowDeckPrediction = true; // Release+Debug -- PRIMARY feature as of Session 4: dealer's real hole card icon + the "Next cards" 3-card-ahead preview, see BlackjackCheat.cpp's SimulateDealerOutcome()
+		bool ShowCardsBeforeBet = true; // Release+Debug -- Session 9: predicted dealer/your-hand icons shown BEFORE the round is even dealt, see BlackjackCheat.cpp's SimulatePreDeal(). Separate from ShowDeckPrediction (which only ever applies post-deal) since this is a distinctly more provisional guess -- see that function's own header comment -- and the user may want it off independently. Gated on the table's real animation-lock field (Table.f_581, see BlackjackCheat.cpp's IsAtBettingPhase()) so it only shows once the table is genuinely free to act on bets -- an earlier version of this gate guessed at a fixed real-time delay instead (PreDealSettleDelaySeconds, since removed) before that lock field was identified.
 
 #ifdef _DEBUG
 		// HUD text panel position/scale -- dev-tuning values, not something
