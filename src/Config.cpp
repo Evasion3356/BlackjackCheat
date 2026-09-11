@@ -5,8 +5,7 @@
 
 #include <windows.h>
 #include <fstream>
-#include <cstdio>
-#include <cstdlib>
+#include <sstream>
 #include <string>
 #include <exception>
 
@@ -53,9 +52,14 @@ namespace
 
 	void SetFloat(Section& sec, const char* key, float value)
 	{
-		char buf[64];
-		sprintf_s(buf, "%g", value);
-		sec[key] = buf;
+		// std::ostringstream's default floatfield (unset -- neither fixed
+		// nor scientific) picks whichever representation is shorter at the
+		// default 6-significant-digit precision, same behavior "%g" gave --
+		// see CLAUDE.md's "No C-style strings/buffers" convention for why
+		// this replaced a fixed char[64] + sprintf_s.
+		std::ostringstream oss;
+		oss << value;
+		sec[key] = oss.str();
 	}
 
 	void SetBool(Section& sec, const char* key, bool value)
