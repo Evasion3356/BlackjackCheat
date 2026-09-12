@@ -12,31 +12,44 @@
 	(compile-time checked against the argument list) instead of spdlog's
 	bundled fmt library or the old printf-style %d/%s/%llX specifiers.
 
-	Release uses spdlog's global ASYNC thread pool (1 background thread,
-	8192-slot queue, blocking-overflow policy so a burst never silently
-	drops a diagnostic line) -- the calling thread just pushes an
-	already-formatted message and returns immediately. Debug uses a plain
-	SYNCHRONOUS logger instead -- deliberate, not a placeholder: Session 9
-	live testing traced a real eject/reinject hang directly to this
-	logger. `spdlog::async::thread_pool`'s destructor (thread_pool-inl.h)
-	calls `t.join()` on its worker thread, and that destructor runs when
-	this file's function-local static `logger` (holding the last
-	shared_ptr to it) gets torn down during DLL unload -- i.e. from
-	inside DllMain's DLL_PROCESS_DETACH. Joining a thread from inside
-	DllMain is a well-documented Windows deadlock trap (the OS loader
-	lock is held for the whole call), which manifested exactly as "eject
-	just doesn't complete" -- not a crash, a hang. Debug is where this
-	project's own workflow (build -> eject -> reinject -> repeat, many
-	times an hour) actually exercises DLL unload constantly, so it gets
-	the deadlock-proof synchronous logger; Release loads once at game
-	launch and is never hot-ejected in normal play, so it keeps the
-	async logger's lower per-call overhead (user directive: "ONLY for
-	debug. Release should be [a]sync[hronous]"). The one place this
-	still touches Release's own risk profile is the ordinary
-	DLL_PROCESS_DETACH that happens at normal game exit -- untested this
-	session (the eject hang was always caught via manual eject, not
-	process exit), flagged as a real, if lower-probability, open
-	question rather than assumed safe.
+	SYNCHRONOUS in both Debug and Release -- deliberate, not a placeholder,
+	and not merely the Debug-only fallback an earlier version of this file
+	had. Session 9 live testing traced a real eject/reinject hang directly
+	to spdlog's ASYNC thread pool: its destructor (thread_pool-inl.h) calls
+	`t.join()` on its one worker thread, and that destructor runs when the
+	last owning shared_ptr (the registry's, or this file's own static) gets
+	torn down during DLL unload -- i.e. from inside DllMain's
+	DLL_PROCESS_DETACH, which already holds the OS loader lock for the
+	whole call. The worker thread can't actually finish exiting without
+	that same lock (needed to fire DLL_THREAD_DETACH), so `join()` and the
+	thread's own exit deadlock each other -- not a crash, a silent hang,
+	confirmed both by this project's own live testing and by spdlog's own
+	still-open upstream issues (gabime/spdlog#1183, #1214). No signaling
+	scheme (event/semaphore instead of join, a hand-rolled thread instead
+	of spdlog's) fixes this from inside DllMain -- Microsoft's own DLL
+	guidance is a blanket "never synchronize with another thread from
+	DllMain, this can deadlock," not "don't join specifically," because
+	any wait can transitively need the loader lock through code paths that
+	aren't stable across library versions. The only fixes that actually
+	work are calling spdlog::shutdown() proactively during normal
+	execution, well before unload starts (not from DllMain at all -- this
+	project has no such hook exposed by ScriptHookRDR2's SDK, and would
+	require a manual pre-eject user step otherwise), or never destroying
+	the thread pool at all (a deliberate leak, trading the deadlock for an
+	unbounded per-eject thread/handle leak and a real, if narrow, crash
+	race if the worker is mid-write when FreeLibrary unmaps the DLL).
+	Given all of that, going synchronous everywhere was chosen over any of
+	those tradeoffs -- and it costs nothing measurable: `Log::Write` is
+	never called from `OnTick()`'s per-frame hot path (see
+	`BlackjackCheat.cpp`'s `OnTick`, which only calls `DrawOverlay()`);
+	every other call site is either Debug-only (`#ifdef _DEBUG`) or a
+	Probe*-/Dump*-prefixed function only reachable from the Debug-only F11
+	menu. In Release, `Log::Write` fires a handful of times total per session
+	(`DllMain`'s `Config::Reload`/`GamePointers::GetScriptThreads`,
+	`ScriptMain`'s "started" line, `SetEnabled(true)`) -- never per-tick --
+	so even a synchronous write+flush's worst-case latency on a tired
+	5400rpm HDD (low single-digit milliseconds) is a one-time cost buried
+	in game-load/toggle time, not a per-frame one.
 
 	SPDLOG_WCHAR_TO_UTF8_SUPPORT adds a second Log::Write overload taking
 	a wide (L"...") format string + wide args -- spdlog formats and
@@ -55,7 +68,6 @@
 #define SPDLOG_WCHAR_TO_UTF8_SUPPORT
 
 #include "..\external\spdlog\include\spdlog\spdlog.h"
-#include "..\external\spdlog\include\spdlog\async.h"
 #include "..\external\spdlog\include\spdlog\sinks\basic_file_sink.h"
 
 #include <memory>
@@ -69,19 +81,12 @@ namespace Log
 		{
 			static const std::shared_ptr<spdlog::logger> logger = []
 			{
-				// Debug: synchronous, deliberately -- no background thread
-				// pool means nothing for DLL_PROCESS_DETACH to deadlock
-				// joining, see this file's own header comment for the real
-				// eject-hang this fixed. Release: async, per user
-				// directive -- Release is never hot-ejected in normal
-				// play, so it keeps the lower per-call overhead.
-#ifdef _DEBUG
+				// Synchronous in both configs -- no background thread pool
+				// means nothing for DLL_PROCESS_DETACH to deadlock joining,
+				// see this file's own header comment for the eject hang
+				// this fixed and why async isn't worth the risk here.
 				auto l = spdlog::basic_logger_mt<spdlog::synchronous_factory>(
 					"BlackjackCheat", "BlackjackCheat.log", /*truncate*/ false);
-#else
-				auto l = spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-					"BlackjackCheat", "BlackjackCheat.log", /*truncate*/ false);
-#endif
 				l->set_pattern("[%H:%M:%S.%e] %v");
 				l->flush_on(spdlog::level::trace); // flush after every line, same durability as the old fclose-every-call behavior
 				return l;
