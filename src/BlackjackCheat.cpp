@@ -290,7 +290,7 @@
 	log line (Debug-only), the same technique PokerCheat's own predicted
 	board used -- this is the most valuable live-testing signal for
 	confirming kDeckSlot/kDeckCursorOffset are actually right, and needs no
-	F10 interaction at all, just normal play with the Debug build running.
+	F11 interaction at all, just normal play with the Debug build running.
 
 	Session 5 addition -- turn order traced, NPC seats confirmed real AND
 	deterministic, kMySeatSlot upgraded, deck-ahead prediction made
@@ -411,7 +411,7 @@
 	hitting many sessions in):
 
 	- Built a generic diagnostic (GamePointers::DumpLocalStackJsonl(),
-	  wired to a new F10 "Dump Full Stack JSONL" item) that dumps EVERY
+	  wired to a new F11 "Dump Full Stack JSONL" item) that dumps EVERY
 	  script-local slot of bjack_sp's thread to a timestamped JSONL file
 	  -- no theory about what any slot means, just every plausible
 	  interpretation (i32/u32/i64/f32/hex) of its raw 8 bytes. Built
@@ -721,7 +721,7 @@
 	Session 9 addendum for the full slot-by-slot evidence. STILL open:
 	the two new Release+Debug icon positions (reusing HoleCardIconX/Y and
 	NextCardIconBaseX/Y verbatim) were not visually confirmed this pass
-	(the user read real screen cards and F10 dumps, not the on-screen
+	(the user read real screen cards and F11 dumps, not the on-screen
 	icon layout) -- may still need the same kind of live Reload-Config
 	retuning HoleCardIconX itself went through (0.821 -> 0.957).
 
@@ -765,7 +765,7 @@
 	  more seats are joining" from "one more seat is about to confirm"
 	  ahead of time. Added ValidatePreDeal() (right after SimulatePreDeal())
 	  as an instrument, not a fix -- the same "PredictionCheck every round,
-	  no F10 needed" self-validation UpdateDeckPrediction() already does
+	  no F11 needed" self-validation UpdateDeckPrediction() already does
 	  for the dealer draw-out, logging a per-seat + dealer MATCH/MISMATCH
 	  ("PreDealCheck" lines) every round from now on so future sessions can
 	  characterize how often/why this actually happens instead of relying
@@ -785,6 +785,33 @@
 	  technique, no header/config difference worth porting) -- the bug was
 	  never in HOW cards get drawn, only in WHEN this file decided a hand
 	  was safe to draw.
+
+	Session 13 addition -- Betting Advice (user request): a new Low/
+	Medium/High bet-sizing readout, its own Config::Values::
+	ShowBettingAdvice toggle (default true), drawn ABOVE the ordinary
+	hit/stand/double/split line (DrawBettingAdviceStatus(), positioned at
+	AdviceY minus the same fixed offset DrawInsuranceStatus already uses
+	to sit just below it). Weighting algorithm lives in two places, same
+	"deck-derived when trustworthy, textbook fallback otherwise"
+	convention as everything else in this file since Session 7:
+	BlackjackDeckSim::EvaluateBettingConfidence() plays the current hand
+	out via PlayHandOut() (the same "what actually happens" helper
+	EvaluateSplit() already uses) and compares the real result against
+	the dealer's own simulated final hand -- High for an immediate
+	natural blackjack or a win reached by simply standing pat, Medium for
+	a win that only materializes by hitting/doubling into it, Low for a
+	push or loss. When that isn't trustworthy (same
+	isLastSeatBeforeDealer-or-dealer-already-17+ precondition
+	DetermineCheatAction()/EvaluateSplit() need), DetermineBettingAdvice()
+	falls back to BlackjackHandEval::EstimateBettingConfidence(), a rough
+	textbook-strength heuristic (hand total vs. the dealer's single
+	visible up card, same "2-6 weak/9-Ace strong" convention the standard
+	basic-strategy chart already uses). Both are pure, tested functions
+	(see tests/BlackjackHandEvalTests.cpp/BlackjackDeckSimTests.cpp) --
+	this file's own DetermineBettingAdvice()/DrawBettingAdviceStatus() are
+	thin wrappers, same separation-of-concerns discipline as
+	DetermineAdvice()/DrawAdviceStatus(). NOT yet live-tested against a
+	real hand.
 
 	Not yet done: blackjack payout ratio (3:2 vs 6:5 -- one plausible-
 	looking `1.5f` constant was found near line 7246 in Session 2 but
@@ -1238,7 +1265,7 @@ namespace BlackjackCheat
 		// Session 9 live-testing addendum -- self-validates SimulatePreDeal()
 		// the same way UpdateDeckPrediction() already self-validates the
 		// dealer draw-out prediction (a "PredictionCheck" log line every
-		// round, no F10 needed): added specifically because live testing
+		// round, no F11 needed): added specifically because live testing
 		// caught a real MISMATCH (predicted dealer 9S/10C, actual dealer
 		// 2D/5D -- see docs/JOURNAL.md). Root cause understood but NOT
 		// fully solvable in general (see SimulatePreDeal()'s own header
@@ -1252,7 +1279,7 @@ namespace BlackjackCheat
 		// relative to the real deal, with no further tick left to
 		// self-correct in. This log line exists to characterize how
 		// often/why that happens going forward without needing a manual
-		// F10 dump every time -- not a fix, an instrument.
+		// F11 dump every time -- not a fix, an instrument.
 		void ValidatePreDeal(rage::scrThread* thread, bool dealerHasCards, const PredictedDeal& preDeal)
 		{
 			if (!dealerHasCards)
@@ -1516,6 +1543,41 @@ namespace BlackjackCheat
 				futureRanks, futureCount, canDouble, isSplitAceHand, isLastSeatBeforeDealer);
 		}
 
+		// Session 13 addition -- Betting Advice (user request: a Low/
+		// Medium/High bet-sizing readout, shown above the ordinary
+		// hit/stand/double/split line). Same futureRanks-gathering
+		// pattern as DetermineAdvice() above -- reads the live deck into
+		// a plain rank array and hands it to the pure, tested
+		// BlackjackDeckSim::EvaluateBettingConfidence(). When that isn't
+		// trustworthy (another occupied seat still has to act before the
+		// dealer, and the dealer's own hand isn't already 17+), falls
+		// back to BlackjackHandEval::EstimateBettingConfidence() -- a
+		// rough, non-deck-derived heuristic, same "textbook chart when
+		// deck simulation isn't trustworthy" convention DetermineAdvice()
+		// itself already uses for Split.
+		BlackjackHandEval::BettingConfidence DetermineBettingAdvice(rage::scrThread* thread, const HandCards& playerHand, const HandCards& dealerHand,
+			std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool isLastSeatBeforeDealer)
+		{
+			std::int32_t futureRanks[kFutureLookahead];
+			std::int32_t futureCount = 0;
+			for (; futureCount < kFutureLookahead; futureCount++)
+			{
+				std::int32_t idx = deckCursor + futureCount;
+				if (idx < 0 || idx >= deckCount)
+					break;
+				futureRanks[futureCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
+			}
+
+			BlackjackDeckSim::BettingAdvice advice = BlackjackDeckSim::EvaluateBettingConfidence(
+				playerHand.ranks, playerHand.count, dealerHand.ranks, dealerHand.count,
+				futureRanks, futureCount, canDouble, isLastSeatBeforeDealer);
+
+			if (advice.trustworthy)
+				return advice.confidence;
+
+			return BlackjackHandEval::EstimateBettingConfidence(playerHand.ranks, playerHand.count, dealerHand.ranks[1]);
+		}
+
 		PredictedHand g_predictedDealerOutcome{};   // LIVE -- refreshed every tick, for the HUD (always the current best guess)
 		PredictedHand g_predictionBaseline{};       // FROZEN at round start -- for PredictionCheck validation only (see below)
 		bool g_predictionRoundActive = false;
@@ -1537,7 +1599,7 @@ namespace BlackjackCheat
 		// against the dealer's real final hand -- runs every tick
 		// regardless of HUD toggles, same convention as
 		// UpdateCardCounting(), so the log line fires automatically during
-		// normal play with no F10 interaction needed. This is the single
+		// normal play with no F11 interaction needed. This is the single
 		// most useful piece of live evidence a future session can gather
 		// about whether kDeckSlot/kDeckCursorOffset and the turn-order
 		// trace above are actually right, the same role PokerCheat's own
@@ -1657,6 +1719,49 @@ namespace BlackjackCheat
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
 			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), adviceX, adviceY);
+		}
+
+		// Session 13 addition -- Betting Advice, same pipeline/convention
+		// as DrawAdviceStatus but positioned just ABOVE it (user request:
+		// "Display it above ShowAdvice"), same offset-from-AdviceY
+		// technique DrawInsuranceStatus below uses to sit just below it.
+		const char* BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence)
+		{
+			switch (confidence)
+			{
+				case BlackjackHandEval::BettingConfidence::Low: return "BET LOW";
+				case BlackjackHandEval::BettingConfidence::Medium: return "BET MEDIUM";
+				case BlackjackHandEval::BettingConfidence::High: return "BET HIGH";
+				default: return "?";
+			}
+		}
+
+#ifndef _DEBUG
+		constexpr float kReleaseBettingAdviceYOffset = -0.045f;
+#endif
+
+		void DrawBettingAdviceStatus(BlackjackHandEval::BettingConfidence confidence)
+		{
+#ifdef _DEBUG
+			const Config::Values& cfg = Config::Get();
+			float x = cfg.AdviceX;
+			float y = cfg.AdviceY - 0.045f;
+#else
+			float x = kReleaseAdviceX;
+			float y = kReleaseAdviceY + kReleaseBettingAdviceYOffset;
+#endif
+			int r = 255, g = 140, b = 140;
+			switch (confidence)
+			{
+				case BlackjackHandEval::BettingConfidence::Low: r = 255; g = 140; b = 140; break;
+				case BlackjackHandEval::BettingConfidence::Medium: r = 255; g = 220; b = 140; break;
+				case BlackjackHandEval::BettingConfidence::High: r = 140; g = 255; b = 140; break;
+			}
+
+			std::string formatText = WrapBgFormatText(BettingConfidenceLabel(confidence), 32);
+
+			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);
 		}
 
 		// Same pipeline/convention as DrawAdviceStatus -- positioned just
@@ -1804,13 +1909,31 @@ namespace BlackjackCheat
 
 #ifndef _DEBUG
 		// Named (not just local to DrawNextCardIcons) so DrawOverlay()'s
-		// Session 9 predicted-own-hand call site below can anchor off the
-		// exact same spot without duplicating these literals.
+		// betting-phase "next cards after the deal" call site below can
+		// anchor off the exact same spot without duplicating these
+		// literals. This slot used to also host the pre-deal predicted-
+		// own-hand icons (Session 9); that moved to kReleaseMyHandIcon*
+		// below (user request) specifically to free this spot up so the
+		// betting-phase view could show a same-position "next cards"
+		// preview matching the post-deal one.
 		constexpr float kReleaseNextCardIconBaseX = 0.55f; // user-confirmed via live Reload Config tuning (0.62 initial guess -> 0.55)
 		constexpr float kReleaseNextCardIconY = 0.59f;
 		constexpr float kReleaseNextCardIconSpacingX = 0.03f;
 		constexpr float kReleaseNextCardIconWidth = 0.025f;
 		constexpr float kReleaseNextCardIconHeight = 0.06f;
+
+		// Player's own predicted hand, pre-deal/betting-phase only (see
+		// SimulatePreDeal()) -- drawn near the player's own on-screen
+		// avatar instead of the NextCardIcon* slot above. User-confirmed
+		// via live Reload Config tuning (0.2/0.2 initial guess -> these),
+		// same process NextCardIconBaseX/HoleCardIconX already went
+		// through (see Config.h's MyHandIconX/Y for the Debug-tunable
+		// equivalent).
+		constexpr float kReleaseMyHandIconX = 0.13f;
+		constexpr float kReleaseMyHandIconY = 0.925f;
+		constexpr float kReleaseMyHandIconSpacingX = 0.02f;
+		constexpr float kReleaseMyHandIconWidth = 0.02f;
+		constexpr float kReleaseMyHandIconHeight = 0.04f;
 #endif
 
 		void DrawNextCardIcons(const std::int32_t* ranks, const std::int32_t* suits, std::int32_t count)
@@ -1886,6 +2009,36 @@ namespace BlackjackCheat
 			std::int32_t mySeat = ReadInt(thread, kMySeatSlot);
 			if (mySeat < 0 || mySeat >= static_cast<std::int32_t>(kSeatCount))
 				mySeat = FindMySeatByPed(thread);
+
+			// Session 9 SECOND live bug report -- turn order is strictly
+			// ascending seat 0->1->2->3 then the dealer (Session 5), so
+			// "is mySeat the last seat left to act before the dealer" is
+			// simply "is any HIGHER-indexed seat occupied" -- if so, that
+			// seat's own hits will consume some of the cursor before the
+			// dealer's real turn ever begins, breaking
+			// DetermineCheatAction()'s dealer-simulation premise (see that
+			// function's own header comment for the real bug this fixes:
+			// a bust-proof hard 9 was advised Stand because the engine
+			// assumed the very next undrawn card goes straight to the
+			// dealer, when in fact another occupied seat was due to draw
+			// it first). Computed up here (not just below, where it used
+			// to live) since Session 14's pre-deal betting-advice call
+			// needs it too, and occupancy is already meaningful before
+			// the deal happens -- see this same field's use in
+			// SimulatePreDeal()'s own seatWillPlay derivation.
+			bool isMySeatLastBeforeDealer = true;
+			if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
+			{
+				for (std::uint32_t higherSeat = static_cast<std::uint32_t>(mySeat) + 1; higherSeat < kSeatCount; higherSeat++)
+				{
+					std::uint32_t higherSeatBase = kTableSlot + kSeatsBase + higherSeat * kSeatStride;
+					if (ReadInt(thread, higherSeatBase + kSeatOccupiedOffset) != -1)
+					{
+						isMySeatLastBeforeDealer = false;
+						break;
+					}
+				}
+			}
 
 			HandCards dealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
 			bool dealerHasCards = dealerHand.count > 0;
@@ -1993,13 +2146,29 @@ namespace BlackjackCheat
 					y += kLineHeight;
 				}
 
-				std::int32_t nextIdx = preDeal.cursorAfterDeal;
-				if (nextIdx >= 0 && nextIdx < liveDeckCount)
+				// User request: show the next few cards after the deal
+				// (not just one), same kNextCardPreviewCount=3 depth as the
+				// post-deal "Next cards" preview below -- these are exactly
+				// as deterministic as that preview (same fixed deck), just
+				// read from cursorAfterDeal instead of the live cursor.
 				{
-					std::int32_t nextRank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(nextIdx) * 2);
-					std::int32_t nextSuit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(nextIdx) * 2 + 1);
-					DrawLine(x, y, "Next after deal: " + FormatCard(nextRank, nextSuit));
-					y += kLineHeight;
+					std::int32_t nextRanks[kNextCardIconMaxCount];
+					std::int32_t nextSuits[kNextCardIconMaxCount];
+					std::int32_t nextCount = 0;
+					for (std::int32_t i = 0; i < kNextCardIconMaxCount; i++)
+					{
+						std::int32_t idx = preDeal.cursorAfterDeal + i;
+						if (idx < 0 || idx >= liveDeckCount)
+							break;
+						nextRanks[nextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
+						nextSuits[nextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+						nextCount++;
+					}
+					if (nextCount > 0)
+					{
+						DrawLine(x, y, "Next after deal: " + FormatCardRun(nextRanks, nextSuits, 0, nextCount));
+						y += kLineHeight;
+					}
 				}
 			}
 
@@ -2017,56 +2186,76 @@ namespace BlackjackCheat
 			// top-right anchor DrawDealerHoleCardIcon uses -- unlike the
 			// post-deal case, NEITHER dealer card is visible on the real
 			// table yet, so both need a stand-in icon here, not just one),
-			// and the player's own predicted hand (growing RIGHT from the
-			// same slot the post-deal "Next cards" row uses -- the two
-			// never draw in the same tick, see preDeal's own header
-			// comment). No dedicated config knobs -- reuses
-			// HoleCardIconX/Y/Width/Height and NextCardIconBaseX/Y/
-			// SpacingX/Width/Height rather than adding a parallel set of
-			// tunables for screen positions that will likely need their
-			// own live Reload-Config tuning pass the same way
-			// HoleCardIconX itself did (0.821 -> 0.957) -- revisit with
-			// dedicated config keys if live testing shows these need
-			// independent placement from their post-deal counterparts.
-			// Own toggle (ShowCardsBeforeBet), see the Debug panel block
-			// above for why this isn't folded into ShowDeckPrediction.
+			// and the player's own predicted hand, drawn near the
+			// player's own avatar instead of the post-deal "Next cards"
+			// slot (user request -- that slot is freed up below to show
+			// an actual "next cards after the deal" preview during
+			// betting phase, matching the post-deal layout). Own toggle
+			// (ShowCardsBeforeBet), see the Debug panel block above for
+			// why this isn't folded into ShowDeckPrediction.
 			if (cfg.ShowCardsBeforeBet && preDeal.valid)
 			{
 #ifdef _DEBUG
 				DrawPredictedHandIcons(preDeal.dealerHand, cfg.HoleCardIconX, cfg.HoleCardIconY, -cfg.HoleCardIconWidth * 1.1f, cfg.HoleCardIconWidth, cfg.HoleCardIconHeight);
 				if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
-					DrawPredictedHandIcons(preDeal.seatHands[mySeat], cfg.NextCardIconBaseX, cfg.NextCardIconY, cfg.NextCardIconSpacingX, cfg.NextCardIconWidth, cfg.NextCardIconHeight);
+					DrawPredictedHandIcons(preDeal.seatHands[mySeat], cfg.MyHandIconX, cfg.MyHandIconY, cfg.MyHandIconSpacingX, cfg.MyHandIconWidth, cfg.MyHandIconHeight);
 #else
 				DrawPredictedHandIcons(preDeal.dealerHand, kReleaseHoleCardIconX, kReleaseHoleCardIconY, -kReleaseHoleCardIconWidth * 1.1f, kReleaseHoleCardIconWidth, kReleaseHoleCardIconHeight);
 				if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
-					DrawPredictedHandIcons(preDeal.seatHands[mySeat], kReleaseNextCardIconBaseX, kReleaseNextCardIconY, kReleaseNextCardIconSpacingX, kReleaseNextCardIconWidth, kReleaseNextCardIconHeight);
+					DrawPredictedHandIcons(preDeal.seatHands[mySeat], kReleaseMyHandIconX, kReleaseMyHandIconY, kReleaseMyHandIconSpacingX, kReleaseMyHandIconWidth, kReleaseMyHandIconHeight);
 #endif
+
+				// User request: show the next 3 cards during the
+				// betting-phase prediction too, same
+				// label+icon-strip presentation DrawNextCardStatus
+				// already gives the post-deal "if you Hit" preview
+				// below -- read from cursorAfterDeal (the card right
+				// after the predicted deal) instead of the live
+				// cursor. Reuses that same NextCardIcon*/Advice screen
+				// slot, which preDeal.valid guarantees is otherwise
+				// idle this tick (the post-deal block below only ever
+				// draws once dealerHasCards/haveAdvice, i.e. after the
+				// real deal has happened).
+				constexpr std::int32_t kPreDealNextCardPreviewCount = kNextCardIconMaxCount;
+				std::int32_t preDealNextRanks[kPreDealNextCardPreviewCount];
+				std::int32_t preDealNextSuits[kPreDealNextCardPreviewCount];
+				std::int32_t preDealNextCount = 0;
+				for (std::int32_t i = 0; i < kPreDealNextCardPreviewCount; i++)
+				{
+					std::int32_t idx = preDeal.cursorAfterDeal + i;
+					if (idx < 0 || idx >= liveDeckCount)
+						break;
+					preDealNextRanks[preDealNextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
+					preDealNextSuits[preDealNextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+					preDealNextCount++;
+				}
+				if (preDealNextCount > 0)
+					DrawNextCardStatus(preDealNextRanks, preDealNextSuits, preDealNextCount);
 			}
 
-			// Session 9 SECOND live bug report -- turn order is strictly
-			// ascending seat 0->1->2->3 then the dealer (Session 5), so
-			// "is mySeat the last seat left to act before the dealer" is
-			// simply "is any HIGHER-indexed seat occupied" -- if so, that
-			// seat's own hits will consume some of the cursor before the
-			// dealer's real turn ever begins, breaking
-			// DetermineCheatAction()'s dealer-simulation premise (see that
-			// function's own header comment for the real bug this fixes:
-			// a bust-proof hard 9 was advised Stand because the engine
-			// assumed the very next undrawn card goes straight to the
-			// dealer, when in fact another occupied seat was due to draw
-			// it first).
-			bool isMySeatLastBeforeDealer = true;
-			if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
+			// Session 14 addition -- Betting Advice, betting-phase ONLY
+			// (user request). Session 13's original wiring ran this
+			// post-deal (dealerHasCards required) -- by then the bet is
+			// already locked in, so the "how should I size this bet"
+			// readout was both too late to act on AND kept showing after
+			// the phase it's named for had already ended. Session 14
+			// moved the only call site here, gated on preDeal.valid,
+			// which SimulatePreDeal()/the call site above already forces
+			// false outside the true betting phase (Table.f_580==0 and an
+			// untouched, freshly-shuffled deck -- see IsAtBettingPhase()'s
+			// own header comment) -- so this can never fire post-deal.
+			// Reuses the exact same deterministic preDeal data
+			// ShowCardsBeforeBet's icon preview above already reads.
+			// canDouble is hardcoded true here: the real bankroll>=bet
+			// gate the post-deal Hit/Stand loop below computes isn't
+			// meaningful yet at this phase since no bet has been placed
+			// for the hand that hasn't been dealt.
+			if (cfg.ShowBettingAdvice && preDeal.valid && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
 			{
-				for (std::uint32_t higherSeat = static_cast<std::uint32_t>(mySeat) + 1; higherSeat < kSeatCount; higherSeat++)
-				{
-					std::uint32_t higherSeatBase = kTableSlot + kSeatsBase + higherSeat * kSeatStride;
-					if (ReadInt(thread, higherSeatBase + kSeatOccupiedOffset) != -1)
-					{
-						isMySeatLastBeforeDealer = false;
-						break;
-					}
-				}
+				BlackjackHandEval::BettingConfidence preDealBettingConfidence = DetermineBettingAdvice(
+					thread, preDeal.seatHands[mySeat], preDeal.dealerHand,
+					preDeal.cursorAfterDeal, liveDeckCount, /*canDouble=*/true, isMySeatLastBeforeDealer);
+				DrawBettingAdviceStatus(preDealBettingConfidence);
 			}
 
 			BlackjackHandEval::Action bestAction = BlackjackHandEval::Action::Stand;
@@ -2088,6 +2277,8 @@ namespace BlackjackCheat
 						handCount = static_cast<std::int32_t>(kMaxHandsPerSeat); // defensive -- unconfirmed cap
 
 					bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
+					if (!isMe || !dealerHasCards)
+						continue;
 
 					for (std::int32_t h = 0; h < handCount; h++)
 					{
@@ -2098,6 +2289,40 @@ namespace BlackjackCheat
 
 						BlackjackHandEval::HandValue value = BlackjackHandEval::EvaluateHand(hand.ranks, hand.count);
 
+						// Session 10 live bug fix: canDouble previously
+						// only checked card count, so advice would
+						// recommend Double even when the player
+						// couldn't actually afford it -- the game's own
+						// legality gate also requires bankroll >= bet
+						// (BlackjackHandEval.h's own header comment,
+						// func_1237 case 4: `f_1 >= f_4[handIndex]`).
+						// When that fails, the player should be told to
+						// Stand instead if that's what the underlying
+						// engine would have recommended as second
+						// choice -- both DetermineCheatAction() and
+						// GetBasicStrategyAction() already demote
+						// Double to Hit/Stand on their own once
+						// canDouble is false, so no separate handling
+						// is needed here beyond computing it correctly.
+						std::int32_t bankroll = ReadInt(thread, seatBase + kSeatBankrollOffset);
+						std::int32_t bet = ReadInt(thread, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h));
+						bool canDouble = (hand.count == 2) && (bankroll >= bet);
+						bool canSplit = (hand.count == 2 && handCount < static_cast<std::int32_t>(kMaxHandsPerSeat));
+
+						// A seat with 2 hands can only have gotten
+						// there via exactly one split (kMaxHandsPerSeat
+						// caps it there -- see file header comment).
+						// Since split requires the original pair to
+						// share the same RANK, if THIS hand's first
+						// (non-drawn) card is an Ace, the pair that
+						// was split must have been a pair of Aces --
+						// see GetBasicStrategyAction()'s own header
+						// comment for why that's enough to identify a
+						// split-Ace hand without any dedicated
+						// "how did this hand originate" flag existing
+						// in the struct itself.
+						bool isSplitAceHand = (handCount == static_cast<std::int32_t>(kMaxHandsPerSeat)) && hand.ranks[0] == 14;
+
 						// Advice is only computed/shown for the local
 						// player's own hand(s) -- there's no reason to
 						// recommend a play for an AI opponent's cards, and
@@ -2107,42 +2332,8 @@ namespace BlackjackCheat
 						// shows whichever is currently NOT a bust/21, same
 						// simplification PokerCheat's single "your hand"
 						// assumption made.
-						if (isMe && dealerHasCards && !value.bust && value.total < 21)
+						if (cfg.ShowAdvice && !value.bust && value.total < 21)
 						{
-							// Session 10 live bug fix: canDouble previously
-							// only checked card count, so advice would
-							// recommend Double even when the player
-							// couldn't actually afford it -- the game's own
-							// legality gate also requires bankroll >= bet
-							// (BlackjackHandEval.h's own header comment,
-							// func_1237 case 4: `f_1 >= f_4[handIndex]`).
-							// When that fails, the player should be told to
-							// Stand instead if that's what the underlying
-							// engine would have recommended as second
-							// choice -- both DetermineCheatAction() and
-							// GetBasicStrategyAction() already demote
-							// Double to Hit/Stand on their own once
-							// canDouble is false, so no separate handling
-							// is needed here beyond computing it correctly.
-							std::int32_t bankroll = ReadInt(thread, seatBase + kSeatBankrollOffset);
-							std::int32_t bet = ReadInt(thread, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h));
-							bool canDouble = (hand.count == 2) && (bankroll >= bet);
-							bool canSplit = (hand.count == 2 && handCount < static_cast<std::int32_t>(kMaxHandsPerSeat));
-
-							// A seat with 2 hands can only have gotten
-							// there via exactly one split (kMaxHandsPerSeat
-							// caps it there -- see file header comment).
-							// Since split requires the original pair to
-							// share the same RANK, if THIS hand's first
-							// (non-drawn) card is an Ace, the pair that
-							// was split must have been a pair of Aces --
-							// see GetBasicStrategyAction()'s own header
-							// comment for why that's enough to identify a
-							// split-Ace hand without any dedicated
-							// "how did this hand originate" flag existing
-							// in the struct itself.
-							bool isSplitAceHand = (handCount == static_cast<std::int32_t>(kMaxHandsPerSeat)) && hand.ranks[0] == 14;
-
 							bestAction = DetermineAdvice(thread, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isMySeatLastBeforeDealer); // Session 7 fourth/sixth addendum: deck-derived simulation (BlackjackDeckSim.h), not blind basic strategy -- see that function's own header comment. isMySeatLastBeforeDealer: Session 9 second live bug fix, see DetermineAdvice()'s own header comment
 							haveAdvice = true;
 						}
@@ -2374,7 +2565,7 @@ namespace BlackjackCheat
 		BlackjackHandEval::HandValue predValue = BlackjackHandEval::EvaluateHand(predicted.ranks, predicted.totalCount);
 
 		std::string predStr = FormatCardRun(predicted.ranks, predicted.suits, predicted.knownCount, predicted.totalCount);
-		Log::Write("ProbeDeckPrediction: simulated dealer draw-out from cursor={} (count={}) -- predicted extra draws=[ {}] predicted final total={}{} (Session 5: this re-simulates from the LIVE cursor every tick, so it's exact once every occupied seat ahead of the dealer is done drawing -- see SimulateDealerOutcome()'s header comment; the round-end \"PredictionCheck\" log line separately validates a FROZEN round-start baseline every round, no F10 needed for that part)",
+		Log::Write("ProbeDeckPrediction: simulated dealer draw-out from cursor={} (count={}) -- predicted extra draws=[ {}] predicted final total={}{} (Session 5: this re-simulates from the LIVE cursor every tick, so it's exact once every occupied seat ahead of the dealer is done drawing -- see SimulateDealerOutcome()'s header comment; the round-end \"PredictionCheck\" log line separately validates a FROZEN round-start baseline every round, no F11 needed for that part)",
 			deckCursor, deckCount, predStr, predValue.total, predValue.bust ? " BUST" : "");
 
 		Log::Write("ProbeDeckPrediction: next 6 raw undrawn deck cards from cursor={} (whatever hand draws next, in whatever the real turn order is, gets these in order):", deckCursor);

@@ -40,7 +40,7 @@ cursor every tick instead of freezing a single round-start guess, so it's
 provably exact by the time the dealer's real turn begins, with no need to
 replicate the AI's own decision table. A separate frozen round-start
 baseline still self-validates automatically every round via a Debug-only
-"PredictionCheck" log line, no F10 interaction needed. Card counting
+"PredictionCheck" log line, no F11 interaction needed. Card counting
 (`src/BlackjackCardCounting.h`, Hi-Lo running/true count + insurance/
 16-vs-10 deviations) is SECONDARY -- kept because it's still correct and
 tested, but superseded by direct deck reads for this specific game.
@@ -100,7 +100,7 @@ error -- check `tasklist //FI "IMAGENAME eq RDR2.exe"` before every build.
 
 A `Debug|x64` configuration also exists (`/p:Configuration=Debug` in the
 same command) -- `/MTd` static debug CRT, optimizations disabled, PDB
-deployed alongside the `.asi`. This is also the configuration with the F10
+deployed alongside the `.asi`. This is also the configuration with the F11
 test menu and the `Probe*` diagnostics (see below) -- Release enables the
 advisor unconditionally with no menu at all, same convention as
 PokerCheat.
@@ -152,8 +152,8 @@ logic went unverified against real hands for 9 sessions previously
 specifically because there was no automated check on it (see
 `../PokerCheat/docs/JOURNAL.md`, Session 9); don't repeat that here.
 
-In-game (Debug build only): press F10 for the test menu (NUMPAD 8/2 move,
-NUMPAD 5 select, NUMPAD 0/Backspace/F10 back -- same controls as
+In-game (Debug build only): press F11 for the test menu (NUMPAD 8/2 move,
+NUMPAD 5 select, NUMPAD 0/Backspace/F11 back -- same controls as
 PokerCheat/CollectorOffline).
 
 ## Source layout
@@ -161,7 +161,7 @@ PokerCheat/CollectorOffline).
 - `src/main.cpp` -- `DllMain`, registers `ScriptMain` with ScriptHookRDR2
   and the keyboard handler. Vendored from PokerCheat with only the
   identifiers renamed -- no blackjack-specific logic.
-- `src/script.h` / `script.cpp` -- entry point (`ScriptMain`) and the F10
+- `src/script.h` / `script.cpp` -- entry point (`ScriptMain`) and the F11
   menu shell (Toggle, four `Probe*` diagnostics, Reload Config).
 - `src/BlackjackCheat.h` / `.cpp` -- the actual cheat module. `Enabled`
   flag, `Toggle()`, `OnTick()`. **Its file header comment in `.cpp` is the
@@ -258,7 +258,7 @@ PokerCheat/CollectorOffline).
 None of `src/BlackjackCheat.cpp`'s struct offsets have been checked
 against a live game, even the ones now rated HIGH confidence from static
 tracing alone. To start confirming them: launch RDR2 with a Debug build
-deployed, sit at a blackjack table with a hand dealt, press F10 -> "Probe
+deployed, sit at a blackjack table with a hand dealt, press F11 -> "Probe
 Table Struct" (and "Probe Seat Hands"), then read `BlackjackCheat.log` and
 compare against the real screen. Priority order (see `docs/JOURNAL.md`
 Session 5, which supersedes Session 4's list, for the reasoning behind
@@ -276,7 +276,7 @@ each):
 3. If another seat is occupied (an AI opponent), watch the HUD's
    "Predicted dealer draws" line update as that seat plays its turn --
    the most direct live test of Session 5's turn-order/determinism trace.
-4. F10 -> "Probe Deck Prediction" right after a hand is dealt -- does the
+4. F11 -> "Probe Deck Prediction" right after a hand is dealt -- does the
    logged dealer hole card match what's actually under the face-down card
    once it flips over at round resolution?
 5. Compare the two logged mySeat candidates against your real seat --

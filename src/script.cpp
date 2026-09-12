@@ -3,10 +3,11 @@
 	"bjack_sp" single-player minigame. Sibling of PokerCheat, same toolchain
 	and conventions (see CLAUDE.md).
 
-	Press F10 in-game to open the test menu (NUMPAD 8/2 to move, NUMPAD 5 to
-	select, NUMPAD 0/Backspace/F10 to back out -- same controls as
+	Press F11 in-game to open the test menu (NUMPAD 8/2 to move, NUMPAD 5 to
+	select, NUMPAD 0/Backspace/F11 to back out -- same NUMPAD controls as
 	PokerCheat/CollectorOffline and the ScriptHookRDR2 SDK's own
-	NativeTrainer sample).
+	NativeTrainer sample, but F11 instead of their F10 so this mod's menu
+	doesn't collide with PokerCheat's own F10 menu when both are loaded).
 */
 
 #include "scriptmenu.h" // pulls in script.h (natives/types/enums/main) and keyboard.h
@@ -42,7 +43,7 @@ void ScriptMain()
 	// Config is loaded from DllMain, not here -- see main.cpp.
 
 #ifdef _DEBUG
-	// Debug-only -- the F10 test menu (toggle, probes) is a dev-tuning
+	// Debug-only -- the F11 test menu (toggle, probes) is a dev-tuning
 	// surface, not something an end user should ever see. Release has no
 	// menu to toggle the cheat from at all, so it enables itself
 	// unconditionally below instead. Unlike PokerCheat, Release enabling

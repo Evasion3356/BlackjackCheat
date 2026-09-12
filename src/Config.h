@@ -23,6 +23,7 @@ namespace Config
 		// actively dropped on the next Reload/save now -- see
 		// Config.cpp's ReloadImpl().
 		bool ShowDealerHand = true;
+		bool ShowBettingAdvice = true;  // Session 13: Low/Medium/High bet-sizing readout, drawn ABOVE ShowAdvice's own line -- see BlackjackCheat.cpp's DrawBettingAdviceStatus()/DetermineBettingAdvice() and BlackjackDeckSim::EvaluateBettingConfidence()/BlackjackHandEval::EstimateBettingConfidence() for the weighting algorithm (deck-derived exact result when trustworthy, a rough textbook heuristic otherwise). Own toggle, independent of ShowAdvice -- the user may want the hit/stand/double/split advice without the betting readout or vice versa.
 		bool ShowAdvice = true;         // hit/stand/double/split AND insurance -- see BlackjackCheat.cpp's DrawInsuranceStatus() call site
 		bool ShowDeckPrediction = true; // Release+Debug -- PRIMARY feature as of Session 4: dealer's real hole card icon + the "Next cards" 3-card-ahead preview, see BlackjackCheat.cpp's SimulateDealerOutcome()
 		bool ShowCardsBeforeBet = true; // Release+Debug -- Session 9: predicted dealer/your-hand icons shown BEFORE the round is even dealt, see BlackjackCheat.cpp's SimulatePreDeal(). Separate from ShowDeckPrediction (which only ever applies post-deal) since this is a distinctly more provisional guess -- see that function's own header comment -- and the user may want it off independently. Gated on the table's real animation-lock field (Table.f_581, see BlackjackCheat.cpp's IsAtBettingPhase()) so it only shows once the table is genuinely free to act on bets -- an earlier version of this gate guessed at a fixed real-time delay instead (PreDealSettleDelaySeconds, since removed) before that lock field was identified.
@@ -64,6 +65,21 @@ namespace Config
 		float NextCardIconSpacingX = 0.03f;
 		float NextCardIconWidth = 0.025f;
 		float NextCardIconHeight = 0.06f;
+
+		// Player's own predicted hand, pre-deal/betting-phase only (see
+		// BlackjackCheat.cpp's SimulatePreDeal()) -- drawn near the
+		// player's own on-screen avatar rather than reusing the
+		// NextCardIcon* slot above, which is now free during betting
+		// phase to instead show the post-deal-style "next cards" preview
+		// (see DrawOverlay()'s betting-phase block). User-confirmed via
+		// live Reload Config tuning (0.2/0.2 initial guess -> these) --
+		// same process HoleCardIconX/NextCardIconBaseX already went
+		// through.
+		float MyHandIconX = 0.13f;
+		float MyHandIconY = 0.925f;
+		float MyHandIconSpacingX = 0.02f;
+		float MyHandIconWidth = 0.02f;
+		float MyHandIconHeight = 0.04f;
 #endif
 	};
 
@@ -72,7 +88,7 @@ namespace Config
 	const Values& Get();
 
 	// Re-reads BlackjackCheat.ini from disk, replacing the cached values.
-	// Wired to the F10 menu's "Reload Config" item; also called once,
+	// Wired to the F11 menu's "Reload Config" item; also called once,
 	// eagerly, from DllMain.
 	void Reload();
 }

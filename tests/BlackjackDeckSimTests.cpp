@@ -25,6 +25,9 @@ namespace
 	using BlackjackDeckSim::EvaluateSplit;
 	using BlackjackDeckSim::PlayHandOut;
 	using BlackjackDeckSim::SplitDecision;
+	using BlackjackDeckSim::EvaluateBettingConfidence;
+	using BlackjackDeckSim::BettingAdvice;
+	using Confidence = BlackjackHandEval::BettingConfidence;
 
 	int g_failures = 0;
 
@@ -605,6 +608,116 @@ namespace
 			"15+2=17 should stop after exactly one draw, not keep drawing into the trailing 9s");
 	}
 
+	// Session 13 addition -- Betting Advice's deck-derived path
+	// (EstimateBettingConfidence()'s own non-deck-derived fallback is
+	// tested in tests/BlackjackHandEvalTests.cpp). A natural blackjack
+	// resolves immediately against the dealer's own already-dealt two
+	// cards -- exact and trustworthy regardless of isLastSeatBeforeDealer
+	// or the future deck, since neither side draws.
+	void TestBettingConfidenceNaturalBlackjackIsHigh()
+	{
+		std::printf("TestBettingConfidenceNaturalBlackjackIsHigh:\n");
+
+		std::int32_t player[2] = { 14, 10 }; // A,10 = natural 21
+		std::int32_t dealer[2] = { 2, 3 }; // 5, not a blackjack, still needs to hit
+		std::int32_t future[1] = { 0 }; // unused -- must never be read for this immediate case
+
+		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 0, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ false);
+		Check(advice.trustworthy, "a natural blackjack is trustworthy even with another seat still to act and a dealer that hasn't finished",
+			"neither side draws when the player already has blackjack -- it resolves against the dealer's own already-dealt two cards immediately");
+		Check(advice.outcome == Outcome::Win, "a natural blackjack against a non-blackjack dealer is a Win", "21 on the first two cards beats anything except a matching dealer blackjack");
+		Check(advice.confidence == Confidence::High, "a natural blackjack is always High confidence", "the strongest possible starting hand");
+	}
+
+	// Two natural blackjacks push -- Low confidence, not a Win.
+	void TestBettingConfidenceBothBlackjackIsPush()
+	{
+		std::printf("TestBettingConfidenceBothBlackjackIsPush:\n");
+
+		std::int32_t player[2] = { 14, 10 };
+		std::int32_t dealer[2] = { 14, 12 }; // A,Q = also a natural 21
+
+		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, nullptr, 0, true, false);
+		Check(advice.trustworthy, "both-blackjack is still an immediate, trustworthy resolution", "same short-circuit as the single-blackjack case");
+		Check(advice.outcome == Outcome::Push, "two natural blackjacks push", "neither side has a stronger 21 than the other");
+		Check(advice.confidence == Confidence::Low, "a push is Low confidence, not High, even off a natural blackjack", "a push doesn't favor betting more, regardless of how the hand got there");
+	}
+
+	// Without a natural blackjack, the same dealerOutcomeTrustworthy
+	// precondition DetermineCheatAction()/EvaluateSplit() need applies
+	// here too -- a dealer that still needs to hit, with another seat
+	// still to act, means the future deck can't be trusted at all.
+	void TestBettingConfidenceNotTrustworthyWithoutBlackjack()
+	{
+		std::printf("TestBettingConfidenceNotTrustworthyWithoutBlackjack:\n");
+
+		std::int32_t player[2] = { 10, 6 }; // hard 16, not blackjack
+		std::int32_t dealer[2] = { 2, 3 }; // 5, must hit
+		std::int32_t future[1] = { 5 };
+
+		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 1, true, /*isLastSeatBeforeDealer*/ false);
+		Check(!advice.trustworthy, "a dealer that still needs to hit, with another seat still to act, can't be trusted",
+			"same precondition as DetermineCheatAction()/EvaluateSplit() -- the caller must fall back to the textbook heuristic instead");
+	}
+
+	// A win reached by simply standing on the hand as dealt (the dealer
+	// is already pat, so PlayHandOut() never needs to consume a future
+	// card) is High confidence -- the "blackjack/high probability of
+	// winning" case from the user's own description, even without an
+	// actual natural blackjack.
+	void TestBettingConfidenceStandPatWinIsHigh()
+	{
+		std::printf("TestBettingConfidenceStandPatWinIsHigh:\n");
+
+		std::int32_t player[2] = { 10, 9 }; // hard 19
+		std::int32_t dealer[2] = { 10, 7 }; // already 17, stands pat
+
+		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, nullptr, 0, true, false);
+		Check(advice.trustworthy, "a dealer already pat at 17 is trustworthy regardless of other seats", "same short-circuit DetermineCheatAction() itself already uses");
+		Check(advice.outcome == Outcome::Win, "hard 19 already beats a dealer pat at 17", "19 > 17, no draw needed on either side");
+		Check(advice.confidence == Confidence::High, "a win with no extra hits needed is High confidence", "the hand as already dealt already wins outright");
+	}
+
+	// A win that only materializes by hitting/doubling into it is Medium
+	// -- exactly the user's own "could win it if the cards advance/double
+	// down on the right card" description. Reuses the same known-winning
+	// double scenario as TestKnownWinningCardIsDouble above (hard 11,
+	// known next card makes 21).
+	void TestBettingConfidenceWinViaDoubleIsMedium()
+	{
+		std::printf("TestBettingConfidenceWinViaDoubleIsMedium:\n");
+
+		std::int32_t player[2] = { 5, 6 }; // hard 11
+		std::int32_t dealer[2] = { 10, 5 }; // 15, must hit
+		std::int32_t future[2] = { 10, 3 }; // player doubles into 21; dealer's own subsequent draw makes 18
+
+		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 2, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ true);
+		Check(advice.trustworthy, "last seat before the dealer makes this trustworthy", "same precondition as DetermineCheatAction()");
+		Check(advice.outcome == Outcome::Win, "doubling the known next card into 21 beats the dealer's resulting 18", "11+10=21 vs 15+3=18");
+		Check(advice.confidence == Confidence::Medium, "a win reached only by doubling into it is Medium, not High",
+			"the win only exists because of the known upcoming card, not the hand as already dealt -- \"could win it if the cards advance\"");
+	}
+
+	// Push and loss both bucket to Low -- neither favors betting more.
+	void TestBettingConfidencePushAndLossAreBothLow()
+	{
+		std::printf("TestBettingConfidencePushAndLossAreBothLow:\n");
+
+		std::int32_t pushPlayer[2] = { 10, 9 }; // hard 19
+		std::int32_t pushDealer[2] = { 10, 9 }; // also 19, stands pat
+		BettingAdvice pushAdvice = EvaluateBettingConfidence(pushPlayer, 2, pushDealer, 2, nullptr, 0, true, false);
+		Check(pushAdvice.trustworthy, "dealer already pat is trustworthy regardless of other seats", "same short-circuit as every other pat-dealer case");
+		Check(pushAdvice.outcome == Outcome::Push, "identical stand-pat totals push", "19 vs 19");
+		Check(pushAdvice.confidence == Confidence::Low, "a push is Low confidence", "no reason to bet more on a hand that only ties");
+
+		std::int32_t lossPlayer[2] = { 10, 8 }; // hard 18
+		std::int32_t lossDealer[2] = { 10, 9 }; // 19, stands pat, already beats 18
+		BettingAdvice lossAdvice = EvaluateBettingConfidence(lossPlayer, 2, lossDealer, 2, nullptr, 0, true, false);
+		Check(lossAdvice.trustworthy, "dealer already pat is trustworthy regardless of other seats", "same short-circuit as every other pat-dealer case");
+		Check(lossAdvice.outcome == Outcome::Loss, "hard 18 already loses to a dealer pat at 19", "18 < 19, and this hand's own best line (Stand) can't change that");
+		Check(lossAdvice.confidence == Confidence::Low, "a loss is Low confidence", "no reason to bet more on a hand that's already losing");
+	}
+
 	void TestOutcomeRanking()
 	{
 		std::printf("TestOutcomeRanking:\n");
@@ -651,6 +764,12 @@ int main()
 	TestSplitFivesDoublesWithinEachNewHand();
 	TestSplitNotTrustworthyWithTooFewFutureCards();
 	TestDealerSimulationStopsAtSeventeen();
+	TestBettingConfidenceNaturalBlackjackIsHigh();
+	TestBettingConfidenceBothBlackjackIsPush();
+	TestBettingConfidenceNotTrustworthyWithoutBlackjack();
+	TestBettingConfidenceStandPatWinIsHigh();
+	TestBettingConfidenceWinViaDoubleIsMedium();
+	TestBettingConfidencePushAndLossAreBothLow();
 	TestOutcomeRanking();
 
 	if (g_failures == 0)

@@ -12,7 +12,7 @@ namespace BlackjackCheat
 {
 	extern bool Enabled;
 
-	// Flips Enabled and logs the new state. Wired to the F10 menu's
+	// Flips Enabled and logs the new state. Wired to the F11 menu's
 	// "Toggle Blackjack Cheat" item.
 	void Toggle();
 
@@ -31,11 +31,11 @@ namespace BlackjackCheat
 	void OnTick();
 
 #ifdef _DEBUG
-	// Everything below is wired to the F10 test menu only (see
+	// Everything below is wired to the F11 test menu only (see
 	// script.cpp's BuildMenu(), Debug-only) -- dev-tuning/reversing tools,
 	// same convention as PokerCheat's equivalents. These exist specifically
 	// because the struct offsets below are UNCONFIRMED static-trace
-	// candidates -- running these against a real game session (F10 while
+	// candidates -- running these against a real game session (F11 while
 	// actually seated at a blackjack table) is the concrete next step
 	// needed to confirm or correct them, the same iterative process
 	// PokerCheat's docs/JOURNAL.md documents happening over many sessions.
@@ -43,14 +43,14 @@ namespace BlackjackCheat
 	// Diagnostic: finds bjack_sp's running scrThread and logs every
 	// candidate struct field (LaunchArgs slot, Table base, deck
 	// cursor/count + next few cards, dealer hand, every seat's hand(s))
-	// to BlackjackCheat.log. Wired to the F10 menu's "Probe Table Struct"
+	// to BlackjackCheat.log. Wired to the F11 menu's "Probe Table Struct"
 	// item.
 	void ProbeTableStruct();
 
 	// Diagnostic: logs bjack_sp's script-local stack's start/end absolute
 	// addresses (same convention as PokerCheat's DumpLocalStackRange) --
 	// meant to be pasted into Cheat Engine for live/visual memory analysis.
-	// Wired to the F10 menu's "Dump Local Stack Range" item.
+	// Wired to the F11 menu's "Dump Local Stack Range" item.
 	void DumpLocalStackRange();
 
 	// Diagnostic: dumps, for every candidate seat (0-3), the occupancy
@@ -59,7 +59,7 @@ namespace BlackjackCheat
 	// ProbeSeatOccupancy, built to sanity-check the per-seat struct
 	// candidates against real gameplay (bankroll/bet are Session 2
 	// additions -- see BlackjackCheat.cpp's file header comment). Wired
-	// to the F10 menu's "Probe Seat Hands" item.
+	// to the F11 menu's "Probe Seat Hands" item.
 	void ProbeSeatHands();
 
 	// Diagnostic: logs the current deterministic deck-ahead prediction --
@@ -68,9 +68,9 @@ namespace BlackjackCheat
 	// array ahead of the current cursor (see BlackjackCheat.cpp's
 	// SimulateDealerOutcome()) -- and the next few raw undrawn deck cards.
 	// Session 4 addition, the blackjack equivalent of PokerCheat's
-	// predicted-board probing. Wired to the F10 menu's "Probe Deck
+	// predicted-board probing. Wired to the F11 menu's "Probe Deck
 	// Prediction" item. The same prediction is also self-validated
-	// automatically every round (no F10 needed) via a "PredictionCheck"
+	// automatically every round (no F11 needed) via a "PredictionCheck"
 	// log line written when each round ends -- see
 	// BlackjackCheat.cpp's UpdateDeckPrediction().
 	void ProbeDeckPrediction();
@@ -84,7 +84,7 @@ namespace BlackjackCheat
 	// garbage even though its count/first-card neighbors read correctly)
 	// where the fix is to search a raw memory window for the ACTUAL
 	// value rather than keep guessing candidate offsets one at a time.
-	// Wired to the F10 menu's "Dump Full Stack JSONL" item -- run it
+	// Wired to the F11 menu's "Dump Full Stack JSONL" item -- run it
 	// while a hand you can see the real answer for (e.g. the dealer's
 	// up card, or your own hole cards) is on the table, then grep/jq the
 	// output for that real rank/suit pair to find where it actually

@@ -2,7 +2,7 @@
 	Adapted from the ScriptHookRDR2 SDK's NativeTrainer sample (Alexander
 	Blade, http://dev-c.com). Same two changes CollectorOffline made, both
 	forced by building against a newer C++ standard than the 2019 sample
-	targeted -- the F10-vs-F5 toggle logic itself lives in scriptmenu.h's
+	targeted -- the F11-vs-F5 toggle logic itself lives in scriptmenu.h's
 	MenuInput::MenuSwitchPressed(), not here:
 	  - DrawText renamed DrawTextAt: windows.h #defines DrawText to
 	    DrawTextA (Win32's own function) when built with the MultiByte

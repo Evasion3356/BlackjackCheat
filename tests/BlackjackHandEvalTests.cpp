@@ -20,6 +20,8 @@ namespace
 	using BlackjackHandEval::HandValue;
 	using BlackjackHandEval::EvaluateHand;
 	using BlackjackHandEval::GetBasicStrategyAction;
+	using BlackjackHandEval::EstimateBettingConfidence;
+	using Confidence = BlackjackHandEval::BettingConfidence;
 	using Action = BlackjackHandEval::Action;
 
 	int g_failures = 0;
@@ -163,6 +165,58 @@ namespace
 		Check(GetBasicStrategyAction(strongTotal, 2, 6, true, true, false) == Action::Stand, "sanity check: non-split-Ace A,8 vs 6 is Stand anyway", "confirms the flag matters by picking a case where the ordinary answer already agrees, as a control");
 		Check(GetBasicStrategyAction(strongTotal, 2, 6, true, true, true) == Action::Stand, "split-Ace A,8 vs 6 is Stand (same answer, forced not chosen)", "same result as the control case, but for the forced reason, not the ordinary strategy reason");
 	}
+
+	// Session 13 addition -- Betting Advice's non-deck-derived fallback
+	// heuristic (BlackjackDeckSim::EvaluateBettingConfidence()'s own
+	// tests cover the exact, deck-derived path). A bust is always Low and
+	// a natural blackjack is always High regardless of the dealer's up
+	// card -- both short-circuit before the scoring heuristic even runs.
+	void TestEstimateBettingConfidenceShortCircuits()
+	{
+		std::printf("TestEstimateBettingConfidenceShortCircuits:\n");
+
+		std::int32_t bustHand[3] = { 10, 6, 8 }; // 24, bust
+		Check(EstimateBettingConfidence(bustHand, 3, 10) == Confidence::Low, "a busted hand is always Low", "no dealer up card can rescue an already-busted hand");
+
+		std::int32_t blackjackHand[2] = { 14, 10 }; // A,10 = natural 21
+		Check(EstimateBettingConfidence(blackjackHand, 2, 2) == Confidence::High, "a natural blackjack is always High, even against a weak-looking dealer 2", "a made 21 on the first two cards is the strongest possible hand regardless of the dealer's up card");
+	}
+
+	// The scoring heuristic itself: total strength + dealer up-card
+	// weakness/strength. A strong total (>=19) against a weak dealer
+	// up card (2-6, the standard "dealer bust card" range) is the
+	// clearest High; a "stiff" total (12-16) against a strong dealer up
+	// card (9-Ace) is the clearest Low; a made total (17-18) against a
+	// neutral dealer up card (7-8) lands squarely in Medium.
+	void TestEstimateBettingConfidenceScoring()
+	{
+		std::printf("TestEstimateBettingConfidenceScoring:\n");
+
+		std::int32_t strongHand[2] = { 10, 10 }; // hard 20
+		Check(EstimateBettingConfidence(strongHand, 2, 5) == Confidence::High, "hard 20 vs a weak dealer 5 is High", "strong total + weak dealer up card both push toward High");
+
+		std::int32_t stiffHand[2] = { 10, 6 }; // hard 16
+		Check(EstimateBettingConfidence(stiffHand, 2, 10) == Confidence::Low, "hard 16 vs a strong dealer 10 is Low", "the classic bust-risk stiff hand against a strong dealer card is the clearest Low");
+
+		std::int32_t madeHand[2] = { 10, 7 }; // hard 17
+		Check(EstimateBettingConfidence(madeHand, 2, 8) == Confidence::Medium, "hard 17 vs a neutral dealer 8 is Medium", "a made total against a neutral dealer up card is neither a clear win nor a clear loss");
+	}
+
+	// A soft total's extra "can't bust on the next card" bonus can tip a
+	// hand from Medium into High that an otherwise-identical HARD total
+	// would not reach -- proof the soft bonus actually changes the
+	// bucket, not just the score, for at least one real case.
+	void TestEstimateBettingConfidenceSoftBonusTipsBucket()
+	{
+		std::printf("TestEstimateBettingConfidenceSoftBonusTipsBucket:\n");
+
+		std::int32_t hardEighteen[2] = { 10, 8 }; // hard 18
+		Check(EstimateBettingConfidence(hardEighteen, 2, 5) == Confidence::Medium, "hard 18 vs a weak dealer 5 is Medium", "baseline without the soft bonus, for comparison against the soft case below");
+
+		std::int32_t softEighteen[2] = { 14, 7 }; // A,7 = soft 18
+		Check(EstimateBettingConfidence(softEighteen, 2, 5) == Confidence::High, "soft 18 (same total) vs the same weak dealer 5 is High",
+			"the soft bonus (can't bust on the next card) is what pushes an otherwise-identical 18 from Medium to High");
+	}
 }
 
 int main()
@@ -173,6 +227,9 @@ int main()
 	TestBasicStrategySoft();
 	TestBasicStrategyPairs();
 	TestSplitAceHands();
+	TestEstimateBettingConfidenceShortCircuits();
+	TestEstimateBettingConfidenceScoring();
+	TestEstimateBettingConfidenceSoftBonusTipsBucket();
 
 	if (g_failures == 0)
 	{

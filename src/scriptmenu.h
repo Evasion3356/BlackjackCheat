@@ -2,7 +2,9 @@
 	Adapted from the ScriptHookRDR2 SDK's NativeTrainer sample menu framework
 	(Alexander Blade, http://dev-c.com), same vendored copy CollectorOffline
 	uses. Only change from the original: MenuSwitchPressed() below uses
-	VK_F10 instead of VK_F5 as the toggle key.
+	VK_F11 instead of VK_F5 as the toggle key -- rebound from the originally
+	vendored VK_F10 because PokerCheat's own menu already uses F10, and the
+	two mods' menus were colliding when both were loaded.
 */
 
 #pragma once
@@ -229,11 +231,12 @@ struct MenuInputButtonState
 class MenuInput
 {
 public:
-	// Toggle key changed to F10 (was F5 in the SDK sample), same as
-	// CollectorOffline.
+	// Toggle key changed to F11 (was F5 in the SDK sample; briefly F10 like
+	// CollectorOffline/PokerCheat, rebound to F11 to stop colliding with
+	// PokerCheat's own F10 menu when both mods are loaded together).
 	static bool MenuSwitchPressed()
 	{
-		return IsKeyJustUp(VK_F10);
+		return IsKeyJustUp(VK_F11);
 	}
 	static MenuInputButtonState GetButtonState()
 	{

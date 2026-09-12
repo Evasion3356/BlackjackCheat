@@ -89,6 +89,14 @@
 // tests/BlackjackDeckSimTests.cpp's "hard 9 denied dealer bust" case for
 // the regression test built from this exact bug shape.
 //
+// Session 13 addendum -- EvaluateBettingConfidence() added (user request:
+// a "Betting Advice" HUD line, Low/Medium/High, shown above the ordinary
+// hit/stand/double/split readout). Deliberately reuses PlayHandOut() (the
+// same "what actually happens if this hand follows the engine's own
+// advice" helper EvaluateSplit() already relies on) rather than
+// introducing a second, parallel simulation -- see that function's own
+// header comment below for the full weighting rationale.
+//
 // Session 10 addendum -- the isLastSeatBeforeDealer fallback above was
 // itself too blunt and caused two more live bug reports. (1) Hard 12
 // (K,2) with a known next card of King (a certain bust) was advised Hit:
@@ -465,6 +473,69 @@ namespace BlackjackDeckSim
 
 		result.trustworthy = true;
 		result.shouldSplit = splitValue > noSplitValue;
+		return result;
+	}
+
+	// Session 13 addition -- Betting Advice. Answers "how strongly does
+	// the CURRENT hand favor the player, in bet-sizing terms" by playing
+	// the hand out with the engine's own best advice (PlayHandOut(), the
+	// same helper EvaluateSplit() above already uses for its own
+	// "what actually happens" comparison) and comparing the result to the
+	// dealer's own simulated final hand. High confidence: an immediate
+	// natural blackjack (resolves against the dealer's own already-dealt
+	// two cards -- real data, not a guess, see BlackjackCheat.cpp's file
+	// header, Session 4 -- with no draw-out needed on either side, so
+	// it's exact regardless of isLastSeatBeforeDealer) or a win reached by
+	// simply standing on the hand as dealt (PlayHandOut() consumed no
+	// extra cards to get there). Medium: a win that only materializes by
+	// hitting/doubling into it -- the "could win it if the cards advance"
+	// case. Low: anything that ends in a push or a loss. Same
+	// dealerOutcomeTrustworthy precondition as DetermineCheatAction()/
+	// EvaluateSplit() above -- when it doesn't hold, `trustworthy` comes
+	// back false and the caller must fall back to
+	// BlackjackHandEval::EstimateBettingConfidence() (a rough,
+	// non-deck-derived heuristic) instead of trusting `confidence`.
+	struct BettingAdvice
+	{
+		bool trustworthy = false;
+		Outcome outcome = Outcome::Push;
+		BlackjackHandEval::BettingConfidence confidence = BlackjackHandEval::BettingConfidence::Low;
+	};
+
+	inline BettingAdvice EvaluateBettingConfidence(
+		const std::int32_t* playerRanks, std::int32_t playerCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDouble, bool isLastSeatBeforeDealer)
+	{
+		BettingAdvice result;
+
+		BlackjackHandEval::HandValue playerNow = BlackjackHandEval::EvaluateHand(playerRanks, playerCount);
+		BlackjackHandEval::HandValue dealerNow = BlackjackHandEval::EvaluateHand(dealerRanks, dealerCount);
+
+		if (playerNow.blackjack)
+		{
+			result.trustworthy = true;
+			result.outcome = dealerNow.blackjack ? Outcome::Push : Outcome::Win;
+			result.confidence = (result.outcome == Outcome::Win) ? BlackjackHandEval::BettingConfidence::High : BlackjackHandEval::BettingConfidence::Low;
+			return result;
+		}
+
+		bool dealerOutcomeTrustworthy = isLastSeatBeforeDealer || dealerNow.total >= 17;
+		if (!dealerOutcomeTrustworthy)
+			return result;
+
+		PlayoutResult played = PlayHandOut(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount, canDouble, isLastSeatBeforeDealer);
+		DealerSimResult dealerFinal = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + played.consumed, futureCount - played.consumed);
+
+		result.trustworthy = true;
+		result.outcome = CompareOutcome(played.value, dealerFinal.value);
+
+		if (result.outcome == Outcome::Win)
+			result.confidence = (played.consumed == 0) ? BlackjackHandEval::BettingConfidence::High : BlackjackHandEval::BettingConfidence::Medium;
+		else
+			result.confidence = BlackjackHandEval::BettingConfidence::Low; // push or loss
+
 		return result;
 	}
 }

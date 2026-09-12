@@ -80,6 +80,7 @@ namespace
 		{
 			auto& general = ini.sections["General"];
 			g_values.ShowDealerHand = GetOr(general, "ShowDealerHand", defaults.ShowDealerHand);
+			g_values.ShowBettingAdvice = GetOr(general, "ShowBettingAdvice", defaults.ShowBettingAdvice);
 			g_values.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
 			g_values.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
 			g_values.ShowCardsBeforeBet = GetOr(general, "ShowCardsBeforeBet", defaults.ShowCardsBeforeBet);
@@ -101,6 +102,11 @@ namespace
 			g_values.NextCardIconSpacingX = GetOr(hud, "NextCardIconSpacingX", defaults.NextCardIconSpacingX);
 			g_values.NextCardIconWidth = GetOr(hud, "NextCardIconWidth", defaults.NextCardIconWidth);
 			g_values.NextCardIconHeight = GetOr(hud, "NextCardIconHeight", defaults.NextCardIconHeight);
+			g_values.MyHandIconX = GetOr(hud, "MyHandIconX", defaults.MyHandIconX);
+			g_values.MyHandIconY = GetOr(hud, "MyHandIconY", defaults.MyHandIconY);
+			g_values.MyHandIconSpacingX = GetOr(hud, "MyHandIconSpacingX", defaults.MyHandIconSpacingX);
+			g_values.MyHandIconWidth = GetOr(hud, "MyHandIconWidth", defaults.MyHandIconWidth);
+			g_values.MyHandIconHeight = GetOr(hud, "MyHandIconHeight", defaults.MyHandIconHeight);
 #endif
 		}
 
@@ -115,6 +121,7 @@ namespace
 
 		auto& general = ini.sections["General"];
 		SetBool(general, "ShowDealerHand", g_values.ShowDealerHand);
+		SetBool(general, "ShowBettingAdvice", g_values.ShowBettingAdvice);
 		SetBool(general, "ShowAdvice", g_values.ShowAdvice);
 		SetBool(general, "ShowDeckPrediction", g_values.ShowDeckPrediction);
 		SetBool(general, "ShowCardsBeforeBet", g_values.ShowCardsBeforeBet);
@@ -136,6 +143,11 @@ namespace
 		SetFloat(hud, "NextCardIconSpacingX", g_values.NextCardIconSpacingX);
 		SetFloat(hud, "NextCardIconWidth", g_values.NextCardIconWidth);
 		SetFloat(hud, "NextCardIconHeight", g_values.NextCardIconHeight);
+		SetFloat(hud, "MyHandIconX", g_values.MyHandIconX);
+		SetFloat(hud, "MyHandIconY", g_values.MyHandIconY);
+		SetFloat(hud, "MyHandIconSpacingX", g_values.MyHandIconSpacingX);
+		SetFloat(hud, "MyHandIconWidth", g_values.MyHandIconWidth);
+		SetFloat(hud, "MyHandIconHeight", g_values.MyHandIconHeight);
 #endif
 
 		{
@@ -146,8 +158,8 @@ namespace
 				Log::Write(L"Config::Reload -- failed to open {} for writing", ResolveIniPath());
 		}
 
-		Log::Write(L"Config::Reload -- loaded from {} (ShowDealerHand={} ShowAdvice={} ShowDeckPrediction={} ShowCardsBeforeBet={})",
-			ResolveIniPath(), g_values.ShowDealerHand, g_values.ShowAdvice, g_values.ShowDeckPrediction, g_values.ShowCardsBeforeBet);
+		Log::Write(L"Config::Reload -- loaded from {} (ShowDealerHand={} ShowBettingAdvice={} ShowAdvice={} ShowDeckPrediction={} ShowCardsBeforeBet={})",
+			ResolveIniPath(), g_values.ShowDealerHand, g_values.ShowBettingAdvice, g_values.ShowAdvice, g_values.ShowDeckPrediction, g_values.ShowCardsBeforeBet);
 	}
 }
 
