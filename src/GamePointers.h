@@ -15,6 +15,8 @@
 #include "..\external\RDR-Classes\rage\atArray.hpp"
 #include "..\external\RDR-Classes\rage\joaat.hpp"
 
+#include <string>
+
 namespace GamePointers
 {
 	// Lazily resolves and caches the address of RDR2.exe's live script
@@ -66,6 +68,6 @@ namespace GamePointers
 	// no further translation needed. Generic -- not blackjack-specific,
 	// intended to be reused by any future script-memory reversing here,
 	// same spirit as this file's other functions.
-	bool DumpLocalStackJsonl(rage::scrThread* thread, const char* outPath);
-	bool DumpLocalStackJsonl(rage::scrThread* thread, std::uint32_t startSlot, std::uint32_t count, const char* outPath);
+	bool DumpLocalStackJsonl(rage::scrThread* thread, const std::string& outPath);
+	bool DumpLocalStackJsonl(rage::scrThread* thread, std::uint32_t startSlot, std::uint32_t count, const std::string& outPath);
 }

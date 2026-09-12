@@ -2603,7 +2603,7 @@ namespace BlackjackCheat
 			<< ".jsonl";
 		std::string outPath = pathStream.str();
 
-		if (GamePointers::DumpLocalStackJsonl(thread, outPath.c_str()))
+		if (GamePointers::DumpLocalStackJsonl(thread, outPath))
 			Log::Write("DumpFullStackJsonl: wrote {} -- grep/jq it for a known real value (e.g. a visible card's rank/suit, a bankroll amount) to find where it actually lives, then diff against a prior dump's file to see what actually changed", outPath);
 		else
 			Log::Write("DumpFullStackJsonl: failed, see prior log line for why");

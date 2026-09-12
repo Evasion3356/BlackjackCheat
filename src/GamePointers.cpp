@@ -2,8 +2,11 @@
 #include "PatternScan.h"
 #include "Log.h"
 
-#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <cstring>
+#include <cmath>
 
 namespace
 {
@@ -75,7 +78,7 @@ namespace GamePointers
 		return reinterpret_cast<void**>(thread->m_Stack) + index;
 	}
 
-	bool DumpLocalStackJsonl(rage::scrThread* thread, std::uint32_t startSlot, std::uint32_t count, const char* outPath)
+	bool DumpLocalStackJsonl(rage::scrThread* thread, std::uint32_t startSlot, std::uint32_t count, const std::string& outPath)
 	{
 		if (!thread || !thread->m_Stack)
 		{
@@ -94,8 +97,7 @@ namespace GamePointers
 			return false;
 		}
 
-		FILE* f = nullptr;
-		fopen_s(&f, outPath, "w");
+		std::ofstream f(outPath);
 		if (!f)
 		{
 			Log::Write("GamePointers::DumpLocalStackJsonl: failed to open {}", outPath);
@@ -111,20 +113,45 @@ namespace GamePointers
 			std::uint64_t raw = slots[i];
 			std::uint32_t u32 = static_cast<std::uint32_t>(raw);
 			std::int32_t i32 = static_cast<std::int32_t>(u32);
+			std::int64_t i64 = static_cast<std::int64_t>(raw);
 			float f32;
 			std::memcpy(&f32, &u32, sizeof(f32));
 
-			fprintf(f, "{\"slot\":%u,\"i32\":%d,\"u32\":%u,\"i64\":%lld,\"f32\":%g,\"hex\":\"%016llX\"}\n",
-				i, i32, u32, static_cast<long long>(static_cast<std::int64_t>(raw)),
-				static_cast<double>(f32), static_cast<unsigned long long>(raw));
+			// A garbage bit pattern (this dump has no idea which slots hold
+			// real floats) often lands on NaN/Inf -- operator<< prints those
+			// as bare `nan`/`-nan`/`inf` tokens, which isn't valid JSON and
+			// breaks any parser (jq, Python's json module, etc.) reading the
+			// file whole. JSON has no NaN/Infinity literal, so `null` is the
+			// correct representation, same as every JSON library's own
+			// float-to-JSON serializer does for a non-finite value.
+			//
+			// i64 is quoted: JSON numbers are only interoperably safe up to
+			// 2^53 (RFC 8259's note on IEEE-754 double range), and a raw
+			// 64-bit reinterpretation of garbage stack bytes routinely
+			// exceeds that -- a bare number here would silently lose
+			// precision under double-based parsers (JS JSON.parse, older
+			// jq). slot/i32/u32 stay bare numbers since their full range
+			// fits well within 2^53.
+			std::ostringstream line;
+			line << "{\"slot\":" << i
+				<< ",\"i32\":" << i32
+				<< ",\"u32\":" << u32
+				<< ",\"i64\":\"" << i64 << "\""
+				<< ",\"f32\":";
+			if (std::isfinite(f32))
+				line << f32;
+			else
+				line << "null";
+			line << ",\"hex\":\"" << std::uppercase << std::hex << std::setfill('0') << std::setw(16) << raw << "\"}";
+			f << line.str() << "\n";
 		}
 
-		fclose(f);
+		f.close();
 		Log::Write("GamePointers::DumpLocalStackJsonl: wrote slots [{}, {}) to {}", startSlot, end, outPath);
 		return true;
 	}
 
-	bool DumpLocalStackJsonl(rage::scrThread* thread, const char* outPath)
+	bool DumpLocalStackJsonl(rage::scrThread* thread, const std::string& outPath)
 	{
 		if (!thread || !thread->m_Stack)
 			return false;
