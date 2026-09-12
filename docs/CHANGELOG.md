@@ -5,6 +5,22 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.1.0] - 2026-09-11
+
+### Added
+- Betting advice readout (Low/Medium/High bet-sizing recommendation),
+  shown during the betting phase itself so it's actionable before the
+  bet is locked in.
+
+### Fixed
+- Release: the advisor could get silently disabled when ScriptHookRDR2
+  re-entered `ScriptMain` on script restart, since the initial enable
+  used a non-idempotent toggle.
+- Advice engine: fixed cases recommending Hit into a certain bust, Stand
+  instead of a known-winning Double, and Split being refused when deck-
+  known upcoming cards made splitting clearly correct. Double is no
+  longer recommended when the player can't cover the doubled bet.
+
 ## [1.0.0] - 2026-09-11
 
 Initial public release.
