@@ -84,6 +84,7 @@ namespace
 			g_values.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
 			g_values.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
 			g_values.ShowCardsBeforeBet = GetOr(general, "ShowCardsBeforeBet", defaults.ShowCardsBeforeBet);
+			g_values.Language = GetOr(general, "Language", defaults.Language);
 
 #ifdef _DEBUG
 			auto& hud = ini.sections["HUD"];
@@ -125,6 +126,7 @@ namespace
 		SetBool(general, "ShowAdvice", g_values.ShowAdvice);
 		SetBool(general, "ShowDeckPrediction", g_values.ShowDeckPrediction);
 		SetBool(general, "ShowCardsBeforeBet", g_values.ShowCardsBeforeBet);
+		general["Language"] = g_values.Language;
 
 #ifdef _DEBUG
 		auto& hud = ini.sections["HUD"];

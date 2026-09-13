@@ -92,4 +92,40 @@ hazards) so they aren't relearned the hard way here too.
   suggestively-named string/message constant alone; find and read the
   function that actually decides when it fires.
 
+## Session 16
+
+- **A per-language ini override doesn't make the game load that
+  language's assets -- test glyph rendering with the game's REAL
+  language set, not just this mod's override.** Same lesson
+  `../PokerCheat/docs/PITFALLS.md` already documents from its own
+  localization work (Session 20/21 there): `BlackjackCheat.ini`'s
+  `Language` key only changes which of `Localization.cpp`'s translated
+  strings THIS MOD draws; it can't make RDR2 itself stream in a
+  different language's font/text assets. Any non-default-language
+  rendering test needs the game's REAL language changed (Steam
+  Properties -> Language) and the game relaunched first -- not
+  re-verified independently in this project since it uses the
+  identical `$Font5`/`UIDEBUG::_BG_DISPLAY_TEXT` pipeline PokerCheat
+  already confirmed on this exact game build, but the underlying
+  mechanism (and pitfall) is the same regardless of which mod is doing
+  the drawing.
+- **A project can silently be missing `/utf-8` even when a sibling
+  project already needed it, for a completely different reason.**
+  `BlackjackCheat.vcxproj` had no `/utf-8` compiler flag at all before
+  this session, because `SPDLOG_USE_STD_FORMAT` (see `src/Log.h`)
+  sidesteps the specific spdlog/fmt static_assert that's the ONLY
+  reason `PokerCheat.vcxproj` already carries the flag -- so simply
+  diffing "does the sibling project have this flag for the same
+  reason" would have missed it. The real, project-independent
+  requirement is: any `.cpp` file with non-ASCII string literals saved
+  as UTF-8 needs `/utf-8` (or equivalent `/source-charset`/
+  `/execution-charset` flags) on ITS OWN project, regardless of what
+  any other build reason might already justify it for elsewhere.
+  Without it, MSVC silently reinterprets the UTF-8 bytes against the
+  current ANSI code page and mangles every non-Latin character instead
+  of raising a hard error -- caught here only because the translation
+  tables were checked by decoding the compiled source file's bytes and
+  pattern-matching Unicode blocks, not by anything the compiler flagged
+  on its own.
+
 Add new entries above this line as real mistakes happen.

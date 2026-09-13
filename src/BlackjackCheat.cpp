@@ -833,6 +833,7 @@
 #include "Log.h"
 #include "GamePointers.h"
 #include "Config.h"
+#include "Localization.h"
 #include "script.h"
 
 #include <string>
@@ -1116,17 +1117,10 @@ namespace BlackjackCheat
 			return out;
 		}
 
-		const char* ActionName(BlackjackHandEval::Action action)
-		{
-			switch (action)
-			{
-				case BlackjackHandEval::Action::Hit: return "HIT";
-				case BlackjackHandEval::Action::Stand: return "STAND";
-				case BlackjackHandEval::Action::Double: return "DOUBLE";
-				case BlackjackHandEval::Action::Split: return "SPLIT";
-				default: return "?";
-			}
-		}
+		// HIT/STAND/DOUBLE/SPLIT wording now lives in Localization.cpp's
+		// kActionLabels (one row per supported language) -- see that
+		// file for the full table. Callers use
+		// Localization::ActionName(action) directly.
 
 		struct HandCards
 		{
@@ -1783,7 +1777,7 @@ namespace BlackjackCheat
 				case BlackjackHandEval::Action::Split: r = 180; g = 255; b = 180; break;
 			}
 
-			std::string formatText = WrapBgFormatText(ActionName(action), 40);
+			std::string formatText = WrapBgFormatText(Localization::ActionName(action), 40);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
 			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), adviceX, adviceY);
@@ -1793,16 +1787,10 @@ namespace BlackjackCheat
 		// as DrawAdviceStatus but positioned just ABOVE it (user request:
 		// "Display it above ShowAdvice"), same offset-from-AdviceY
 		// technique DrawInsuranceStatus below uses to sit just below it.
-		const char* BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence)
-		{
-			switch (confidence)
-			{
-				case BlackjackHandEval::BettingConfidence::Low: return "BET LOW";
-				case BlackjackHandEval::BettingConfidence::Medium: return "BET MEDIUM";
-				case BlackjackHandEval::BettingConfidence::High: return "BET HIGH";
-				default: return "?";
-			}
-		}
+		// BET LOW/MEDIUM/HIGH wording now lives in Localization.cpp's
+		// kBettingConfidenceLabels (one row per supported language) --
+		// see that file for the full table. Callers use
+		// Localization::BettingConfidenceLabel(confidence) directly.
 
 #ifndef _DEBUG
 		constexpr float kReleaseBettingAdviceYOffset = -0.045f;
@@ -1826,7 +1814,7 @@ namespace BlackjackCheat
 				case BlackjackHandEval::BettingConfidence::High: r = 140; g = 255; b = 140; break;
 			}
 
-			std::string formatText = WrapBgFormatText(BettingConfidenceLabel(confidence), 32);
+			std::string formatText = WrapBgFormatText(Localization::BettingConfidenceLabel(confidence), 32);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
 			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);
@@ -1849,7 +1837,7 @@ namespace BlackjackCheat
 			float x = kReleaseAdviceX;
 			float y = kReleaseAdviceY + kReleaseInsuranceYOffset;
 #endif
-			const char* label = takeInsurance ? "Insurance: YES" : "Insurance: No";
+			const char* label = Localization::InsuranceLabel(takeInsurance);
 			int r = takeInsurance ? 180 : 200, g = takeInsurance ? 255 : 200, b = takeInsurance ? 180 : 200;
 
 			std::string formatText = WrapBgFormatText(label, 26);
@@ -2050,7 +2038,7 @@ namespace BlackjackCheat
 			float x = kReleaseAdviceX;
 			float y = kReleaseAdviceY + kReleaseNextCardYOffset;
 #endif
-			std::string formatText = WrapBgFormatText("Next cards:", 26);
+			std::string formatText = WrapBgFormatText(Localization::NextCardsLabel(), 26);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(180, 255, 220, 255);
 			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);

@@ -5,6 +5,14 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.3.0] - 2026-09-13
+
+### Added
+- HUD advice/betting/insurance/next-cards labels are now localized into
+  RDR2's 13 shipped languages, auto-detected from the game's own UI
+  language. `BlackjackCheat.ini`'s new `[General]` `Language` key
+  ("auto" by default) can force a different language if wanted.
+
 ## [1.2.0] - 2026-09-13
 
 ### Fixed

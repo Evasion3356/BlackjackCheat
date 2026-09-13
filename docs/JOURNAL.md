@@ -1565,3 +1565,99 @@ not authored by this session): 16/16 pass (14 previous + 2 new).
 4. Watch for "PreDealCheck" MISMATCH lines across several rounds.
 5. The two icon positions still haven't been visually confirmed as sane.
 6. Backfill Sessions 7 and 8 into this journal (still not attempted).
+
+## Session 16 -- localization: HUD advice/betting/insurance/next-cards labels into RDR2's 13 shipped languages
+
+Ported `../PokerCheat`'s Session 19-21 localization work over to this
+project (user request, right after PokerCheat's own localization
+branch merged). Same approach, different string set: new
+`src/Localization.h/.cpp` hold a `Language` enum matching
+`LANGUAGE::_GET_CURRENT_LANGUAGE_ID()`'s own 13-language return-value
+mapping exactly (identical enum to PokerCheat's), auto-detected on
+first use and re-resolved from the F11 menu's "Reload Config" item
+(now `ReloadConfigAndLocalization()` in `script.cpp`, same wrapper
+PokerCheat's `script.cpp` already has). `BlackjackCheat.ini`'s new
+`[General]` `Language` key ("auto" default) can override it, same
+`Config::Values::Language` field/semantics as PokerCheat's.
+
+This mod's actual Release-visible on-screen text turned out to be a
+different (smaller) set than poker's verdict/personality tags:
+
+1. `ActionName()` -- the HIT/STAND/DOUBLE/SPLIT advice readout
+   (`DrawAdviceStatus()`).
+2. `BettingConfidenceLabel()` -- BET LOW/MEDIUM/HIGH
+   (`DrawBettingAdviceStatus()`).
+3. `InsuranceLabel()` -- "Insurance: YES"/"Insurance: No"
+   (`DrawInsuranceStatus()`).
+4. `NextCardsLabel()` -- "Next cards:" (`DrawNextCardStatus()`).
+
+All four were previously small local `switch`/ternary functions
+directly in `BlackjackCheat.cpp`; those are now removed and their call
+sites point at the `Localization::` equivalents. The Debug-only text
+panel (`DrawLine()`/`DrawPanel()`, gated `#ifdef _DEBUG`) stays
+English-only, same reasoning PokerCheat's `DrawFontTest()`/debug panel
+already documents -- a dev diagnostic surface, not something an end
+user needs translated.
+
+**No separate font test tool was built here.** PokerCheat's own
+Session 20/21 already confirmed, on this exact game build (1491.50),
+that `$Font5` (the `UIDEBUG::_BG_DISPLAY_TEXT` pipeline both mods use
+verbatim -- see `WrapBgFormatText()`'s header comment in
+`BlackjackCheat.cpp`, which already cites PokerCheat's own font
+derivation) renders all 13 languages correctly, CJK included, PROVIDED
+RDR2's own actual configured language matches what's being tested (see
+PokerCheat's `docs/PITFALLS.md` for the "ini override doesn't load
+game assets" lesson -- carries over unchanged, not re-litigated here).
+Since this mod draws through the identical pipeline/font token with no
+poker-specific rendering path, re-running that whole investigation here
+would just reconfirm the same game-build fact a second time.
+
+**A real build gap found along the way**: `BlackjackCheat.vcxproj`
+had no `/utf-8` `AdditionalOptions` on any configuration, unlike
+`PokerCheat.vcxproj` (which already carries it, there for an unrelated
+reason -- spdlog's bundled fmt static-asserting on the code page).
+This project defines `SPDLOG_USE_STD_FORMAT` (see `Log.h`), which
+sidesteps that particular static_assert, so the flag was simply never
+needed before. But `Localization.cpp`'s Cyrillic/CJK/Hangul string
+literals are non-ASCII regardless of spdlog -- without `/utf-8`, MSVC
+reinterprets a UTF-8-saved source file against the current ANSI code
+page instead, silently mangling every non-Latin translation into
+mojibake (or worse, producing a `C4566` warning and replacing
+unrepresentable characters with `?`). Added `/utf-8` to all three
+configurations (Release/Debug/Analyze) as part of this change, not
+just the two PokerCheat's own build needed. Confirmed post-build: all
+three configurations (`Release`, `Debug`, `Analyze`) compile clean,
+and the checked-in `Localization.cpp` round-trips as valid UTF-8
+containing real Cyrillic/CJK/Hangul codepoints (verified by decoding
+the file and pattern-matching each script's Unicode block) -- not yet
+confirmed rendering correctly in an actual running game with a non-
+English UI language, same "static claim, not yet live-verified" caveat
+this project applies to everything else. If a future session sees
+tofu/mojibake for a specific language in-game, check the compiled
+`.asi`'s string table for the expected bytes before assuming the
+translation itself (rather than the encoding pipeline) is at fault.
+
+### Build/test status
+
+`BlackjackCheat.vcxproj` Release, Debug, and Analyze all compiled
+clean (0 warnings/errors) and Debug/Release deployed successfully
+(RDR2.exe was not running). No pure-math header touched --
+`BlackjackHandEvalTests`/`BlackjackCardCountingTests`/
+`BlackjackDeckSimTests` not re-run, none of their headers changed.
+
+### Next live-session priority (in addition to the existing struct-offset priority list above)
+
+1. With RDR2's own UI language actually switched away from English
+   (Steam Properties -> Language, game relaunched -- NOT just this
+   mod's ini override, per the pitfall above) and a hand in progress,
+   confirm the advice/betting/insurance/next-cards labels render
+   correctly on screen for at least one non-Latin language (Russian or
+   Chinese/Japanese/Korean) and one accented-Latin language (French or
+   German).
+2. Confirm the `[General]` `Language` ini override actually forces a
+   different language than the game's own UI setting when set to an
+   explicit code (e.g. `fr-FR` while the game itself runs in English).
+3. Have a native speaker (or at least a second LLM pass) review the
+   translations beyond English -- these are LLM-assisted and unreviewed,
+   same caveat PokerCheat's own `kPersonalityLabels`/`kVerdictLabels`
+   carry.

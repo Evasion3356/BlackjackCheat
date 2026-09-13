@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace Config
 {
 	struct Values
@@ -27,6 +29,19 @@ namespace Config
 		bool ShowAdvice = true;         // hit/stand/double/split AND insurance -- see BlackjackCheat.cpp's DrawInsuranceStatus() call site
 		bool ShowDeckPrediction = true; // Release+Debug -- PRIMARY feature as of Session 4: dealer's real hole card icon + the "Next cards" 3-card-ahead preview, see BlackjackCheat.cpp's SimulateDealerOutcome()
 		bool ShowCardsBeforeBet = true; // Release+Debug -- Session 9: predicted dealer/your-hand icons shown BEFORE the round is even dealt, see BlackjackCheat.cpp's SimulatePreDeal(). Separate from ShowDeckPrediction (which only ever applies post-deal) since this is a distinctly more provisional guess -- see that function's own header comment -- and the user may want it off independently. Gated on the table's real animation-lock field (Table.f_581, see BlackjackCheat.cpp's IsAtBettingPhase()) so it only shows once the table is genuinely free to act on bets -- an earlier version of this gate guessed at a fixed real-time delay instead (PreDealSettleDelaySeconds, since removed) before that lock field was identified.
+
+		// Overrides which language the HUD's advice/betting/insurance/
+		// next-cards labels show in (see Localization.h/.cpp) -- "auto"
+		// (the default) matches the game's own current UI language
+		// automatically via LANGUAGE::_GET_CURRENT_LANGUAGE_ID(), no
+		// setup needed. Set to one of en-US/fr-FR/de-DE/it-IT/es-ES/
+		// pt-BR/pl-PL/ru-RU/ko-KR/zh-TW/ja-JP/es-MX/zh-CN (the exact
+		// codes that native itself maps to) to force a specific
+		// language regardless of the game's own UI language; anything
+		// else unrecognized (a typo, or this default "auto") falls back
+		// to that same auto-detect behavior. Ported from PokerCheat's
+		// identical Language key.
+		std::string Language = "auto";
 
 #ifdef _DEBUG
 		// HUD text panel position/scale -- dev-tuning values, not something

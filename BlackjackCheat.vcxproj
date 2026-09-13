@@ -37,6 +37,7 @@
     <ClCompile Include="src\PatternScan.cpp" />
     <ClCompile Include="src\GamePointers.cpp" />
     <ClCompile Include="src\Config.cpp" />
+    <ClCompile Include="src\Localization.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\ScriptHookSDK\inc\main.h" />
@@ -55,6 +56,7 @@
     <ClInclude Include="src\PatternScan.h" />
     <ClInclude Include="src\GamePointers.h" />
     <ClInclude Include="src\Config.h" />
+    <ClInclude Include="src\Localization.h" />
     <ClInclude Include="external\RDR-Classes\script\scrThread.hpp" />
     <ClInclude Include="external\RDR-Classes\script\scrThreadContext.hpp" />
     <ClInclude Include="external\RDR-Classes\script\scrProgram.hpp" />
@@ -143,6 +145,15 @@
       <FloatingPointModel>Fast</FloatingPointModel>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>external\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- Localization.cpp embeds non-ASCII (Cyrillic/CJK) string
+           literals directly, saved as UTF-8. Without this flag, MSVC
+           reinterprets them against the current ANSI code page instead
+           and mangles every non-Latin translation. Same fix PokerCheat's
+           own vcxproj already carries, there for a different reason
+           (spdlog's bundled fmt static_asserting on the code page);
+           this project uses SPDLOG_USE_STD_FORMAT instead (see Log.h),
+           so it never needed the flag until now. -->
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -179,6 +190,7 @@
       <AssemblerOutput>AssemblyAndSourceCode</AssemblerOutput>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <ObjectFileName>$(IntDir)</ObjectFileName>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -208,6 +220,7 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <AdditionalIncludeDirectories>external\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
