@@ -12,6 +12,14 @@ tracks what an end user experiences, not internal implementation history
   RDR2's 13 shipped languages, auto-detected from the game's own UI
   language. `BlackjackCheat.ini`'s new `[General]` `Language` key
   ("auto" by default) can force a different language if wanted.
+  Translated terms were checked against real blackjack rules/casino
+  glossary sources per language rather than machine-translated blind;
+  two wrong terms (German and Russian "Stand") were caught and
+  corrected this way. The two HUD concepts unique to this mod (the
+  "BET LOW/MEDIUM/HIGH" readout and the "Next cards:" label) have no
+  real casino-terminology equivalent to check against, so those --
+  along with every translation here -- are still not reviewed by a
+  native speaker.
 
 ## [1.2.0] - 2026-09-13
 
