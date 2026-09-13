@@ -5,6 +5,24 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.2.0] - 2026-09-13
+
+### Fixed
+- Dealer hole-card icon no longer vanishes mid-round at some tables
+  (reported at Van Horn, not reproducible at Rhodes) -- it now stays
+  visible through the dealer's own reveal instead of dropping out the
+  instant the script resets for the next round, using a newly-traced
+  round-phase field.
+- Pre-deal predictions no longer briefly show right after sitting down,
+  before betting has actually opened.
+- Advice engine no longer recommends Hit on a soft hand when the only
+  known next card would downgrade it to a strictly worse (but
+  non-busting) total -- e.g. soft 18 hitting into a known 5 for a hard
+  13.
+- "Next cards" preview no longer disappears when `ShowAdvice` is turned
+  off; it now honors `ShowDeckPrediction` independently, as the two
+  toggles were always meant to.
+
 ## [1.1.0] - 2026-09-11
 
 ### Added
