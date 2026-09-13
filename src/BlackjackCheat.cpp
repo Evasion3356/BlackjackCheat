@@ -2351,79 +2351,94 @@ namespace BlackjackCheat
 
 			BlackjackHandEval::Action bestAction = BlackjackHandEval::Action::Stand;
 			bool haveAdvice = false;
+			// Session 15 (user bug report): the "Next cards" deck-ahead
+			// preview was wrongly gated on `haveAdvice`, which only ever
+			// got set inside the `cfg.ShowAdvice`-guarded loop below -- so
+			// turning ShowAdvice off (wanting to hide ONLY the hit/stand/
+			// double/split readout, per the user's own request to keep
+			// making betting decisions unaided) silently killed the deck
+			// prediction too, even though ShowDeckPrediction was still on.
+			// haveValidHand tracks the cheap "is there a live, non-bust,
+			// sub-21 hand to predict off of" fact unconditionally, so
+			// ShowDeckPrediction's gate below no longer depends on whether
+			// advice is being displayed at all -- only DetermineAdvice()
+			// itself (the actual per-hand strategy computation) stays
+			// behind cfg.ShowAdvice.
+			bool haveValidHand = false;
 
-			if (cfg.ShowAdvice)
+			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
-				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
+				std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
+				std::int32_t occupiedMarker = ReadInt(thread, seatBase + kSeatOccupiedOffset);
+				if (occupiedMarker == -1)
+					continue;
+
+				std::int32_t handCount = ReadInt(thread, seatBase + kSeatHandCountOffset);
+				if (handCount <= 0)
+					continue;
+				if (handCount > static_cast<std::int32_t>(kMaxHandsPerSeat))
+					handCount = static_cast<std::int32_t>(kMaxHandsPerSeat); // defensive -- unconfirmed cap
+
+				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
+				if (!isMe || !dealerHasCards)
+					continue;
+
+				for (std::int32_t h = 0; h < handCount; h++)
 				{
-					std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-					std::int32_t occupiedMarker = ReadInt(thread, seatBase + kSeatOccupiedOffset);
-					if (occupiedMarker == -1)
+					std::uint32_t handSlot = seatBase + kSeatHandsOffset + static_cast<std::uint32_t>(h) * kHandStride;
+					HandCards hand = ReadHand(thread, handSlot);
+					if (hand.count <= 0)
 						continue;
 
-					std::int32_t handCount = ReadInt(thread, seatBase + kSeatHandCountOffset);
-					if (handCount <= 0)
-						continue;
-					if (handCount > static_cast<std::int32_t>(kMaxHandsPerSeat))
-						handCount = static_cast<std::int32_t>(kMaxHandsPerSeat); // defensive -- unconfirmed cap
+					BlackjackHandEval::HandValue value = BlackjackHandEval::EvaluateHand(hand.ranks, hand.count);
 
-					bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
-					if (!isMe || !dealerHasCards)
-						continue;
+					// Session 10 live bug fix: canDouble previously
+					// only checked card count, so advice would
+					// recommend Double even when the player
+					// couldn't actually afford it -- the game's own
+					// legality gate also requires bankroll >= bet
+					// (BlackjackHandEval.h's own header comment,
+					// func_1237 case 4: `f_1 >= f_4[handIndex]`).
+					// When that fails, the player should be told to
+					// Stand instead if that's what the underlying
+					// engine would have recommended as second
+					// choice -- both DetermineCheatAction() and
+					// GetBasicStrategyAction() already demote
+					// Double to Hit/Stand on their own once
+					// canDouble is false, so no separate handling
+					// is needed here beyond computing it correctly.
+					std::int32_t bankroll = ReadInt(thread, seatBase + kSeatBankrollOffset);
+					std::int32_t bet = ReadInt(thread, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h));
+					bool canDouble = (hand.count == 2) && (bankroll >= bet);
+					bool canSplit = (hand.count == 2 && handCount < static_cast<std::int32_t>(kMaxHandsPerSeat));
 
-					for (std::int32_t h = 0; h < handCount; h++)
+					// A seat with 2 hands can only have gotten
+					// there via exactly one split (kMaxHandsPerSeat
+					// caps it there -- see file header comment).
+					// Since split requires the original pair to
+					// share the same RANK, if THIS hand's first
+					// (non-drawn) card is an Ace, the pair that
+					// was split must have been a pair of Aces --
+					// see GetBasicStrategyAction()'s own header
+					// comment for why that's enough to identify a
+					// split-Ace hand without any dedicated
+					// "how did this hand originate" flag existing
+					// in the struct itself.
+					bool isSplitAceHand = (handCount == static_cast<std::int32_t>(kMaxHandsPerSeat)) && hand.ranks[0] == 14;
+
+					// Advice is only computed/shown for the local
+					// player's own hand(s) -- there's no reason to
+					// recommend a play for an AI opponent's cards, and
+					// per-hand action requires knowing which hand is
+					// actually "up" (not tracked here), so this always
+					// evaluates every one of the player's hands and
+					// shows whichever is currently NOT a bust/21, same
+					// simplification PokerCheat's single "your hand"
+					// assumption made.
+					if (!value.bust && value.total < 21)
 					{
-						std::uint32_t handSlot = seatBase + kSeatHandsOffset + static_cast<std::uint32_t>(h) * kHandStride;
-						HandCards hand = ReadHand(thread, handSlot);
-						if (hand.count <= 0)
-							continue;
-
-						BlackjackHandEval::HandValue value = BlackjackHandEval::EvaluateHand(hand.ranks, hand.count);
-
-						// Session 10 live bug fix: canDouble previously
-						// only checked card count, so advice would
-						// recommend Double even when the player
-						// couldn't actually afford it -- the game's own
-						// legality gate also requires bankroll >= bet
-						// (BlackjackHandEval.h's own header comment,
-						// func_1237 case 4: `f_1 >= f_4[handIndex]`).
-						// When that fails, the player should be told to
-						// Stand instead if that's what the underlying
-						// engine would have recommended as second
-						// choice -- both DetermineCheatAction() and
-						// GetBasicStrategyAction() already demote
-						// Double to Hit/Stand on their own once
-						// canDouble is false, so no separate handling
-						// is needed here beyond computing it correctly.
-						std::int32_t bankroll = ReadInt(thread, seatBase + kSeatBankrollOffset);
-						std::int32_t bet = ReadInt(thread, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h));
-						bool canDouble = (hand.count == 2) && (bankroll >= bet);
-						bool canSplit = (hand.count == 2 && handCount < static_cast<std::int32_t>(kMaxHandsPerSeat));
-
-						// A seat with 2 hands can only have gotten
-						// there via exactly one split (kMaxHandsPerSeat
-						// caps it there -- see file header comment).
-						// Since split requires the original pair to
-						// share the same RANK, if THIS hand's first
-						// (non-drawn) card is an Ace, the pair that
-						// was split must have been a pair of Aces --
-						// see GetBasicStrategyAction()'s own header
-						// comment for why that's enough to identify a
-						// split-Ace hand without any dedicated
-						// "how did this hand originate" flag existing
-						// in the struct itself.
-						bool isSplitAceHand = (handCount == static_cast<std::int32_t>(kMaxHandsPerSeat)) && hand.ranks[0] == 14;
-
-						// Advice is only computed/shown for the local
-						// player's own hand(s) -- there's no reason to
-						// recommend a play for an AI opponent's cards, and
-						// per-hand action requires knowing which hand is
-						// actually "up" (not tracked here), so this always
-						// evaluates every one of the player's hands and
-						// shows whichever is currently NOT a bust/21, same
-						// simplification PokerCheat's single "your hand"
-						// assumption made.
-						if (cfg.ShowAdvice && !value.bust && value.total < 21)
+						haveValidHand = true;
+						if (cfg.ShowAdvice)
 						{
 							bestAction = DetermineAdvice(thread, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isMySeatLastBeforeDealer); // Session 7 fourth/sixth addendum: deck-derived simulation (BlackjackDeckSim.h), not blind basic strategy -- see that function's own header comment. isMySeatLastBeforeDealer: Session 9 second live bug fix, see DetermineAdvice()'s own header comment
 							haveAdvice = true;
@@ -2435,7 +2450,7 @@ namespace BlackjackCheat
 			if (cfg.ShowAdvice && haveAdvice)
 				DrawAdviceStatus(bestAction);
 
-			if (cfg.ShowDeckPrediction && haveAdvice)
+			if (cfg.ShowDeckPrediction && haveValidHand)
 			{
 				constexpr std::int32_t kNextCardPreviewCount = 3;
 				std::int32_t nextRanks[kNextCardPreviewCount];
