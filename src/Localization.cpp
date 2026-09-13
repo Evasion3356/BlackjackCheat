@@ -15,23 +15,35 @@ namespace
 	// original's tone (a HUD command, not a sentence). One row per
 	// Language (see Localization.h's enum, same ordering), 4 columns
 	// matching BlackjackHandEval::Action's declaration order (Hit,
-	// Stand, Double, Split). Translations beyond row 0 (English) are
-	// LLM-assisted, not yet reviewed by a native speaker per language --
-	// fix a row directly here if a wording turns out to be wrong.
+	// Stand, Double, Split). Verified against real casino/gambling
+	// glossaries per language (web search, session after the initial
+	// LLM-assisted pass -- see docs/JOURNAL.md) rather than trusted on
+	// LLM instinct alone; fr-FR/it-IT/es-ES/es-MX/pt-BR/ko-KR/zh-TW/
+	// zh-CN/ja-JP all matched real sources exactly as originally
+	// written. Two corrections came out of that pass: de-DE's Stand
+	// term was wrong (STEHEN is the term actual German casino/rules
+	// pages use, not the originally-guessed HALTEN) and ru-RU's Stand
+	// term was wrong (ХВАТИТ is the term Russian sources use, not the
+	// originally-guessed СТОП). Still not reviewed by a native speaker,
+	// and pl-PL's terms are a reasonable-looking but not source-matched
+	// guess (PODWÓJ/PODZIEL are imperative forms of the sourced nouns
+	// "podwojenie"/"podział" -- not independently confirmed as the
+	// actual imperative a Polish table would use) -- fix a row directly
+	// here if a wording turns out to be wrong.
 	constexpr int kActionLabelCount = 4;
 	const char* const kActionLabels[kLanguageCount][kActionLabelCount] =
 	{
 		{ "HIT", "STAND", "DOUBLE", "SPLIT" },                     // en-US
-		{ "TIRER", "RESTER", "DOUBLER", "SEPARER" },                // fr-FR
-		{ "ZIEHEN", "HALTEN", "VERDOPPELN", "TEILEN" },             // de-DE
-		{ "CARTA", "STARE", "RADDOPPIA", "DIVIDI" },                // it-IT
-		{ "PEDIR", "PLANTARSE", "DOBLAR", "DIVIDIR" },              // es-ES
-		{ "PEDIR CARTA", "PARAR", "DOBRAR", "DIVIDIR" },            // pt-BR
-		{ "DOBIERZ", "STÓJ", "PODWÓJ", "PODZIEL" },                 // pl-PL
-		{ "ЕЩЕ", "СТОП", "УДВОИТЬ", "РАЗДЕЛИТЬ" },                  // ru-RU
-		{ "히트", "스탠드", "더블", "스플릿" },                        // ko-KR
-		{ "要牌", "停牌", "加倍", "分牌" },                          // zh-TW
-		{ "ヒット", "スタンド", "ダブル", "スプリット" },              // ja-JP
+		{ "TIRER", "RESTER", "DOUBLER", "SÉPARER" },                // fr-FR -- confirmed against regles.com/le-black-jack.com
+		{ "ZIEHEN", "STEHEN", "VERDOPPELN", "TEILEN" },             // de-DE -- STEHEN confirmed (not HALTEN) against German casino/rules sources
+		{ "CARTA", "STARE", "RADDOPPIA", "DIVIDI" },                // it-IT -- confirmed against it.blackjackinfo.com/pokerstars.it
+		{ "PEDIR", "PLANTARSE", "DOBLAR", "DIVIDIR" },              // es-ES -- confirmed against casino.org/es, crehana.com
+		{ "PEDIR CARTA", "PARAR", "DOBRAR", "DIVIDIR" },            // pt-BR -- confirmed against pt.pokernews.com, lance.com.br
+		{ "DOBIERZ", "STÓJ", "PODWÓJ", "PODZIEL" },                 // pl-PL -- Hit/Stand confirmed (holdemshop.pl); Double/Split are un-sourced imperative forms of confirmed nouns
+		{ "ЕЩЕ", "ХВАТИТ", "УДВОИТЬ", "РАЗДЕЛИТЬ" },                // ru-RU -- ХВАТИТ confirmed (not СТОП) against gipsyteam.ru/casino.ru
+		{ "히트", "스탠드", "더블", "스플릿" },                        // ko-KR -- confirmed against reviewland.net (loanwords, used as-is at real tables)
+		{ "要牌", "停牌", "加倍", "分牌" },                          // zh-TW -- confirmed against baike.baidu.com/zhihu.com
+		{ "ヒット", "スタンド", "ダブル", "スプリット" },              // ja-JP -- confirmed against ja.wikipedia.org/majandofu.com
 		{ "PEDIR", "PLANTARSE", "DOBLAR", "DIVIDIR" },              // es-MX -- same as es-ES, no meaningful regional difference for these terms
 		{ "要牌", "停牌", "加倍", "分牌" },                          // zh-CN
 	};
@@ -39,17 +51,22 @@ namespace
 	// BET LOW/MEDIUM/HIGH -- the betting-advice readout (see
 	// DrawBettingAdviceStatus()). Column order matches
 	// BlackjackHandEval::BettingConfidence's declaration order (Low,
-	// Medium, High).
+	// Medium, High). This is this mod's OWN invented HUD concept, not a
+	// real casino term -- no gambling glossary has a "BET LOW/MEDIUM/
+	// HIGH" phrase to verify against, so this table only got a grammar/
+	// diacritics pass (restoring accents an earlier ASCII-safety pass
+	// had stripped, now that BlackjackCheat.vcxproj carries /utf-8),
+	// not the same source-verification kActionLabels above got.
 	constexpr int kBettingConfidenceLabelCount = 3;
 	const char* const kBettingConfidenceLabels[kLanguageCount][kBettingConfidenceLabelCount] =
 	{
 		{ "BET LOW", "BET MEDIUM", "BET HIGH" },                          // en-US
-		{ "MISE FAIBLE", "MISE MOYENNE", "MISE ELEVEE" },                  // fr-FR
+		{ "MISE FAIBLE", "MISE MOYENNE", "MISE ÉLEVÉE" },                  // fr-FR
 		{ "NIEDRIG SETZEN", "MITTEL SETZEN", "HOCH SETZEN" },              // de-DE
 		{ "PUNTATA BASSA", "PUNTATA MEDIA", "PUNTATA ALTA" },              // it-IT
 		{ "APUESTA BAJA", "APUESTA MEDIA", "APUESTA ALTA" },               // es-ES
-		{ "APOSTA BAIXA", "APOSTA MEDIA", "APOSTA ALTA" },                 // pt-BR
-		{ "NISKI ZAKLAD", "SREDNI ZAKLAD", "WYSOKI ZAKLAD" },              // pl-PL
+		{ "APOSTA BAIXA", "APOSTA MÉDIA", "APOSTA ALTA" },                 // pt-BR
+		{ "NISKI ZAKŁAD", "ŚREDNI ZAKŁAD", "WYSOKI ZAKŁAD" },              // pl-PL
 		{ "НИЗКАЯ СТАВКА", "СРЕДНЯЯ СТАВКА", "ВЫСОКАЯ СТАВКА" },           // ru-RU
 		{ "낮은 배팅", "중간 배팅", "높은 배팅" },                          // ko-KR
 		{ "低注", "中注", "高注" },                                        // zh-TW
@@ -63,41 +80,50 @@ namespace
 	// caller convention below). Kept as one combined string per
 	// language/state rather than a separate "Insurance:" prefix +
 	// Yes/No pair, matching the original English's single-string
-	// convention exactly.
+	// convention exactly. The "Insurance" noun itself is confirmed
+	// against real sources for every language below (Assurance/
+	// Versicherung/Assicurazione/Seguro/Ubezpieczenie/Страховка/보험/
+	// 保險/保险/インシュアランス all matched real casino glossaries
+	// exactly); only the YES/No half needed fixing (accents, and the
+	// ja-JP transliteration).
 	constexpr int kInsuranceLabelCount = 2;
 	const char* const kInsuranceLabels[kLanguageCount][kInsuranceLabelCount] =
 	{
 		{ "Insurance: YES", "Insurance: No" },                       // en-US
 		{ "Assurance : OUI", "Assurance : Non" },                     // fr-FR
 		{ "Versicherung: JA", "Versicherung: Nein" },                 // de-DE
-		{ "Assicurazione: SI", "Assicurazione: No" },                 // it-IT
-		{ "Seguro: SI", "Seguro: No" },                               // es-ES
-		{ "Seguro: SIM", "Seguro: Nao" },                             // pt-BR
+		{ "Assicurazione: SÌ", "Assicurazione: No" },                 // it-IT -- SÌ needs the grave accent (bare "si" is the reflexive pronoun)
+		{ "Seguro: SÍ", "Seguro: No" },                               // es-ES -- SÍ needs the accent (bare "si" is the conditional "if")
+		{ "Seguro: SIM", "Seguro: Não" },                             // pt-BR
 		{ "Ubezpieczenie: TAK", "Ubezpieczenie: Nie" },               // pl-PL
 		{ "Страховка: ДА", "Страховка: Нет" },                        // ru-RU
 		{ "보험: 예", "보험: 아니오" },                                // ko-KR
 		{ "保險：是", "保險：否" },                                    // zh-TW
-		{ "インシュランス: はい", "インシュランス: いいえ" },            // ja-JP
-		{ "Seguro: SI", "Seguro: No" },                               // es-MX
+		{ "インシュアランス: はい", "インシュアランス: いいえ" },        // ja-JP -- confirmed transliteration is インシュアランス, not インシュランス (missing ア)
+		{ "Seguro: SÍ", "Seguro: No" },                               // es-MX
 		{ "保险：是", "保险：否" },                                    // zh-CN
 	};
 
 	// "Next cards:" -- label above the next-card-if-you-Hit icon strip,
-	// see DrawNextCardStatus().
+	// see DrawNextCardStatus(). Not a real casino term (this mod's own
+	// deck-prediction feature has no textbook equivalent), so only a
+	// diacritics pass applies here -- restoring accents an earlier
+	// ASCII-safety pass had stripped, now that /utf-8 is confirmed
+	// working end-to-end.
 	const char* const kNextCardsLabel[kLanguageCount] =
 	{
-		"Next cards:",       // en-US
+		"Next cards:",        // en-US
 		"Prochaines cartes:", // fr-FR
-		"Naechste Karten:",   // de-DE
+		"Nächste Karten:",    // de-DE
 		"Prossime carte:",    // it-IT
-		"Proximas cartas:",   // es-ES
-		"Proximas cartas:",   // pt-BR
-		"Nastepne karty:",    // pl-PL
+		"Próximas cartas:",   // es-ES
+		"Próximas cartas:",   // pt-BR
+		"Następne karty:",    // pl-PL
 		"Следующие карты:",   // ru-RU
 		"다음 카드:",           // ko-KR
 		"下一張牌：",           // zh-TW
 		"次のカード:",          // ja-JP
-		"Proximas cartas:",   // es-MX
+		"Próximas cartas:",   // es-MX
 		"下一张牌：",           // zh-CN
 	};
 

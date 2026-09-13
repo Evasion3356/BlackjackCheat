@@ -1661,3 +1661,55 @@ clean (0 warnings/errors) and Debug/Release deployed successfully
    translations beyond English -- these are LLM-assisted and unreviewed,
    same caveat PokerCheat's own `kPersonalityLabels`/`kVerdictLabels`
    carry.
+
+### Same-session addendum -- web-search verification pass against real casino glossaries
+
+Immediately after the above, the user asked how confident these
+translations actually were and whether anything could be done to raise
+that confidence beyond "LLM instinct." Answer: yes -- `WebSearch` each
+language's own real blackjack rules/glossary pages and diff the actual
+terms found against `kActionLabels`/`kInsuranceLabels`. Ran one search
+per language (French/German/Italian/Spanish/Portuguese/Polish/Russian/
+Korean/Chinese/Japanese) plus a follow-up disambiguating German's
+Stand term specifically.
+
+**Result: most of the original pass held up.** fr-FR, it-IT, es-ES/
+es-MX, pt-BR, ko-KR, zh-TW/zh-CN, and ja-JP's HIT/STAND/DOUBLE/SPLIT
+words all matched real sources (regles.com, it.blackjackinfo.com,
+casino.org/es, pt.pokernews.com, reviewland.net, baike.baidu.com,
+ja.wikipedia.org) exactly as originally guessed -- including that
+Korean/Japanese casinos really do use the English loanwords
+(히트/스탠드/더블/스플릿, ヒット/スタンド/ダブル/スプリット) rather than
+native translations, which was a guess rather than a certainty going
+in.
+
+**Two real, concrete errors found and fixed:**
+- German Stand: `HALTEN` was wrong, `STEHEN` is the term actually used
+  (confirmed via a dedicated follow-up search after the first pass came
+  back ambiguous between the two).
+- Russian Stand: `СТОП` was wrong, `ХВАТИТ` is the term actually used
+  (gipsyteam.ru/casino.ru).
+
+**Diacritics restored** (an earlier ASCII-safety instinct, from before
+`/utf-8` was confirmed working, had stripped several): fr-FR
+`SÉPARER`/`ÉLEVÉE`, de-DE `Nächste`, it-IT `SÌ` (not bare "si", which
+is the reflexive pronoun), es-ES/es-MX `SÍ` (not bare "si", the
+conditional "if"), pt-BR `Não`/`Média`/`Próximas`, pl-PL `ZAKŁAD`/
+`ŚREDNI`/`Następne`, ja-JP `インシュアランス` (the correct
+transliteration -- the original `インシュランス` was missing a kana).
+
+**Not source-verified, still a guess**: pl-PL's `PODWÓJ`/`PODZIEL`
+(Double/Split) are imperative forms built from confirmed nouns
+("podwojenie"/"podział") but not independently confirmed as what a
+real Polish-language table actually displays. The `BET LOW/MEDIUM/
+HIGH` and `"Next cards:"` tables are this mod's own invented HUD
+concepts with no textbook/casino equivalent to verify against, so
+those only got a grammar/diacritics pass, not a source-matching one --
+their translation quality still rests on LLM instinct alone.
+
+Rebuilt all three configurations (Release/Debug/Analyze) after the
+edit -- compiled clean, `Localization.cpp` re-verified as valid UTF-8
+decoding to the expected corrected strings (spot-checked
+`STEHEN`/`ХВАТИТ` present in the actual table rows, `HALTEN`/`СТОП`
+only remaining in the explanatory comments documenting what was wrong
+before). Not yet re-tested live in-game.
