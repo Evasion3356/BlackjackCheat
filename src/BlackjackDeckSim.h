@@ -118,6 +118,21 @@
 // certainty the fallback can always still use. See
 // tests/BlackjackDeckSimTests.cpp's "known bust card overrides fallback"
 // and "dealer already pat trusts sim regardless of other seats" cases.
+//
+// Addendum -- the fallback's known-card override above only checked for
+// an outright bust, which missed a live bug report: soft 18 (A,7), known
+// next card 5, another seat still to act (so the fallback triggered) --
+// basic strategy correctly says Hit for soft 18 against a strong dealer
+// upcard, but the known next card (5) demotes the hand to a hard 13, not
+// a bust, yet still strictly worse than the 18 already in hand. Fixed by
+// widening the override to ALSO trigger on any known non-bust total
+// DECREASE, not just a bust -- a strictly lower non-bust total can never
+// compare better against any eventual dealer hand than the higher total
+// already held, the same dealer-independent "higher non-bust total is
+// never worse" guarantee DetermineCheatAction()'s own trustworthy-path
+// tie-break already relies on. See
+// tests/BlackjackDeckSimTests.cpp's "fallback known downgrade card
+// overrides to Stand" case.
 
 #include "BlackjackHandEval.h"
 
@@ -269,9 +284,27 @@ namespace BlackjackDeckSim
 			// guaranteed to be what THIS hand draws if it hits/doubles --
 			// nothing else can get to it first. Basic strategy is blind
 			// to that card by design; never let it recommend drawing a
-			// card already known to bust us.
+			// card already known to bust us -- and, live bug report
+			// (soft 18 [A,7], known next card 5, fallback said Hit):
+			// never let it recommend drawing a card that's a KNOWN
+			// non-bust DOWNGRADE either. A,7,5 demotes to a hard 13 --
+			// not a bust, but strictly worse than the 18 already in
+			// hand, the exact same "known certain deterioration" shape
+			// as the bust check just below, just without busting. A
+			// strictly lower non-bust total can never compare better
+			// against any fixed (even unknown) dealer hand than the
+			// higher total already in hand -- CompareOutcome only ever
+			// looks at total/bust, so this holds regardless of what the
+			// dealer's own eventual hand turns out to be, the same
+			// dealer-independent guarantee the trustworthy simulation
+			// path's own tie-break-toward-higher-total already relies
+			// on (see TestSoftEighteenStandsWhenNextCardOnlyLowersTotal
+			// in tests/BlackjackDeckSimTests.cpp for that path's
+			// equivalent case).
 			if ((fallback == BlackjackHandEval::Action::Hit || fallback == BlackjackHandEval::Action::Double) && futureCount > 0 && playerCount < kHandMaxCards)
 			{
+				BlackjackHandEval::HandValue currentValue = BlackjackHandEval::EvaluateHand(playerRanks, playerCount);
+
 				std::int32_t ranks[kHandMaxCards];
 				std::int32_t count = playerCount;
 				for (std::int32_t i = 0; i < count; i++)
@@ -279,7 +312,8 @@ namespace BlackjackDeckSim
 				ranks[count] = futureRanks[0];
 				count++;
 
-				if (BlackjackHandEval::EvaluateHand(ranks, count).bust)
+				BlackjackHandEval::HandValue nextValue = BlackjackHandEval::EvaluateHand(ranks, count);
+				if (nextValue.bust || nextValue.total < currentValue.total)
 					return BlackjackHandEval::Action::Stand;
 			}
 

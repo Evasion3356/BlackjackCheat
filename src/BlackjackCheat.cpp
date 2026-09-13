@@ -878,27 +878,91 @@ namespace BlackjackCheat
 
 	constexpr std::uint32_t kDealerHandOffset = 2;    // Table.f_2 -- MEDIUM-HIGH confidence
 
-	// Table.f_580 -- EMPIRICAL, live-observed signal for "the table is
-	// genuinely ready for the next bet", NOT claimed to correspond to any
-	// specific func_718 mechanism. History: this file first read 580 as
-	// func_718's own switch-case variable (matches func_1047's real body,
-	// `f_580 = iParam1`), then live testing showed it reading 1 right
-	// after a round concludes and 0 once genuinely at the bet-placing
-	// phase -- backwards from that switch-case theory. A theory that this
-	// was actually an off-by-one onto f_581 (func_1049/func_354's real
-	// animation-busy lock) was tried next and tested live -- WRONG: f_581
-	// read a constant 1 regardless of phase, never toggling. Reverted
-	// back to 580 on the user's direction, trusting the original direct
-	// observation (1 while still resolving the previous round, 0 once
-	// genuinely ready for bets) over either theory -- same
-	// live-observation-over-static-trace precedent this project already
-	// follows elsewhere (e.g. kMySeatSlot/FindMySeatByPed priority
-	// flipping based on what a live probe actually showed, not which
-	// derivation looked cleaner on paper). Which func_718 mechanism this
-	// actually is remains unexplained -- not re-derived this session,
-	// since the empirical behavior is what's actually needed. See
-	// IsAtBettingPhase() below.
-	constexpr std::uint32_t kTableAnimationLockOffset = 580;
+	// Table.f_579 -- CONFIRMED LIVE as func_718's own round-state switch
+	// variable (bjack_sp.ysc.c:25809's `switch (uParam0->f_580)`, set by
+	// func_1047 via `uParam0->f_580 = iParam1`), off by exactly one word
+	// from the decompiled source's own field number -- the same shape as
+	// every other struct correction this project has needed
+	// (kTableFieldOffset 756->757, deck cursor/count, seat hands offset).
+	// A user-directed live investigation (7 F11 "Dump Full Stack JSONL"
+	// snapshots across one full round -- sat down / waiting to bet / bet
+	// placed / an NPC's turn / my own hit-or-stand decision / the dealer
+	// flipping his cards / end of round -- diffed programmatically
+	// against every other Table field already confirmed, to rule out
+	// coincidental matches inside the dealer hand/seats/deck arrays)
+	// found exactly one slot matching func_718's own case values end to
+	// end: table+579 read 0/0 (sat down, waiting to bet), 5/5/5 (bet
+	// placed through both NPC and my own turn -- func_718 case 5,
+	// "waiting on the current seat's action", covers either), then 0/0
+	// again (dealer flip, end of round). ONLY EVER 0 OR 5 IN THIS DATA --
+	// use it for "is any seat currently mid-decision", nothing finer.
+	// It does NOT distinguish "genuinely idle, ready for the next bet"
+	// from "the previous round's payout/reveal animation is still
+	// playing" -- both read 0 here, since func_718's own case 0 resets
+	// the state number immediately, well before the real on-screen
+	// animation catches up (case 8 calls func_1075/increments f_701/
+	// resets to case 0 in one script tick; the animation takes several
+	// more real seconds). For THAT distinction, see kRoundResolvingOffset
+	// below -- the ORIGINAL offset this file used for IsAtBettingPhase()
+	// before this session's investigation, which turned out to be a
+	// separate, real, still-correct field, not an off-by-one error after
+	// all. Kept confirmed but currently unused by any caller -- a future
+	// need for "is a hand actively being decided" (independent of the
+	// resolving-animation question) should reach for this, not
+	// kRoundResolvingOffset.
+	constexpr std::uint32_t kRoundStateOffset = 579;
+
+	// Table.f_580 -- the ORIGINAL offset this file used before this
+	// session (previously named kTableAnimationLockOffset), confirmed by
+	// the SAME 7-dump investigation that found kRoundStateOffset above:
+	// table+580 read 1/0/0/0/0/1/1 across sat down / waiting to bet / bet
+	// placed / NPC's turn / my turn / dealer flipping / end of round --
+	// i.e. 1 SPECIFICALLY while the previous round's payout/reveal
+	// animation is still playing on screen (even after the script has
+	// already reset dealerHand.count to 0 and reshuffled), 0 the rest of
+	// the time (both genuinely idle AND actively mid-hand -- dealerHand
+	// data itself already distinguishes those two). This is NOT
+	// func_718's own state number (off by one from it, at least in
+	// behavior) -- it's a separate animation-sequencer lock, most likely
+	// what func_477(&(uParam0->f_583))/func_1049 (case 0's own
+	// still-busy check, see func_718's decompile) actually reflect. Was
+	// briefly mis-diagnosed this session as simply the wrong offset for
+	// kRoundStateOffset and nearly replaced by it -- reverted once the
+	// same dump data showed the two fields answer genuinely different
+	// questions and IsAtBettingPhase() specifically needs THIS one (its
+	// whole job is staying false during exactly this lingering-animation
+	// window, matching the "1 while still resolving, 0 once genuinely
+	// ready" behavior this offset was originally, correctly, found to
+	// have).
+	constexpr std::uint32_t kRoundResolvingOffset = 580;
+
+	// Table.f_701 (EMPIRICAL -- NOT confirmed to be the same f_701 the
+	// decompile names in func_718's case 8/9, which only increments once
+	// per COMPLETED round; this reads a distinct value at each of several
+	// points WITHIN a single round, so it's very likely an unrelated
+	// field the flat-offset arithmetic happens to land on, same trap as
+	// the false table+644 lead earlier this same investigation -- treat
+	// the number as a raw slot, not a named decompiled field, until a
+	// cross-reference proves otherwise). Found via the SAME 7-dump
+	// investigation, this time searching for a slot taking on >=4 DISTINCT
+	// small clean-int values across the 7 snapshots (kRoundStateOffset
+	// and kRoundResolvingOffset above only ever gave 2 each): table+701
+	// read 1 (just sat down), 2 (waiting to bet), 3 (bet placed / cards
+	// being dealt), 7 (an occupied seat -- NPC or mine, held identically
+	// across both) is deciding hit/stand/double/split, then 8 (dealer's
+	// forced draw-out + payout + reveal, held steady through end of
+	// round). A genuine monotonically-increasing per-phase enum, not a
+	// tick/frame counter -- confirmed by npc_turn and my_turn (10 real
+	// seconds apart) both reading exactly 7, and dealer_flip/end_round
+	// (6 real seconds apart) both reading exactly 8; a raw counter would
+	// have kept climbing across either gap. This is the field to use for
+	// "which part of the round am I in" -- NOT YET CONFIRMED across a
+	// second round in the same sitting (does it reset to 2/3/7/8 for the
+	// next round, or keep climbing to 9/10/11/12? -- 579/580 above are
+	// each independently confirmed to reset every round, so a genuine
+	// per-round reset here would be the expected, consistent answer, but
+	// only a second round's dumps can actually prove it).
+	constexpr std::uint32_t kRoundPhaseOffset = 701;
 
 	constexpr std::uint32_t kSeatsBase = 27;          // Table.f_27 -- MEDIUM-HIGH confidence
 	constexpr std::uint32_t kSeatStride = 60;
@@ -1344,16 +1408,20 @@ namespace BlackjackCheat
 		// (`IsPreDealSettled()`, 1.5s); that was replaced by reading
 		// Table.f_580 directly once live testing showed it toggling
 		// exactly in sync with the real phase transition (1 while still
-		// resolving, 0 once genuinely ready for bets) -- see
-		// kTableAnimationLockOffset's own comment for the full back-and-
-		// forth on WHY this offset works despite two wrong theories about
-		// its underlying mechanism.
+		// resolving, 0 once genuinely ready for bets). Superseded again by
+		// kRoundPhaseOffset (see its own comment) once that field's finer
+		// granularity was found. User-confirmed live: phase 1 (just sat
+		// down, before a round has even started) must NOT count as
+		// betting phase either -- only phase 2 (genuinely waiting for a
+		// bet) is safe to draw predictions on. Excludes phase 8 (dealer
+		// resolving/lingering reveal animation) too, which is exactly the
+		// distinction this function exists for.
 		bool IsAtBettingPhase(rage::scrThread* thread, bool dealerHasCards)
 		{
 			if (dealerHasCards)
 				return false;
 
-			return ReadInt(thread, kTableSlot + kTableAnimationLockOffset) == 0;
+			return ReadInt(thread, kTableSlot + kRoundPhaseOffset) == 2;
 		}
 
 		// Deterministic deck-ahead prediction (Session 4) -- the blackjack
@@ -2043,6 +2111,21 @@ namespace BlackjackCheat
 			HandCards dealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
 			bool dealerHasCards = dealerHand.count > 0;
 
+			// User request: the dealer's hole-card icon (see the
+			// DrawDealerHoleCardIcon() call site below) should stay up
+			// from the deal all the way through the dealer's own reveal,
+			// not just while dealerHand.count>=2 -- the round resets
+			// dealerHand.count to 0 in the same script tick it starts
+			// resolving, while the real on-screen "dealer flips his
+			// cards" animation keeps playing for several more real
+			// seconds. kRoundPhaseOffset's confirmed value 8 covers
+			// exactly the dealer's-turn-through-end-of-round window (see
+			// its own comment for the live evidence) -- read once here
+			// and reused below for both this and IsAtBettingPhase's own
+			// (separate) read.
+			std::int32_t roundPhase = ReadInt(thread, kTableSlot + kRoundPhaseOffset);
+			bool roundResolving = (roundPhase == 8);
+
 			UpdateDeckPrediction(thread, dealerHand, dealerHasCards);
 
 			// Read once, reused by the cheat-action simulation, the "Next
@@ -2056,14 +2139,13 @@ namespace BlackjackCheat
 
 			// Session 9: only worth attempting while nothing has been
 			// dealt yet this round (dealerHasCards false) AND Table.f_580
-			// reads 0 (empirically confirmed to mean "genuinely ready for
-			// bets" -- see kTableAnimationLockOffset's own comment for
-			// the full derivation history) -- see IsAtBettingPhase()'s
-			// own header comment for why dealerHand.count==0 alone isn't
-			// enough (a real live bug this fixes). See SimulatePreDeal()'s
-			// own header comment for the "deck is fixed before the bet"
-			// derivation and the self-correcting-guess caveat this is
-			// layered on top of.
+			// reads 0 (CONFIRMED LIVE to mean "genuinely ready for bets" --
+			// see kRoundResolvingOffset's own comment for the full
+			// derivation) -- see IsAtBettingPhase()'s own header comment
+			// for why dealerHand.count==0 alone isn't enough (a real live
+			// bug this fixes). See SimulatePreDeal()'s own header comment
+			// for the "deck is fixed before the bet" derivation and the
+			// self-correcting-guess caveat this is layered on top of.
 			bool atBettingPhase = IsAtBettingPhase(thread, dealerHasCards);
 			PredictedDeal preDeal = atBettingPhase ? SimulatePreDeal(thread, liveDeckCursor, liveDeckCount) : PredictedDeal{};
 			ValidatePreDeal(thread, dealerHasCards, preDeal); // Session 9 live-testing addendum -- see that function's own header comment
@@ -2083,15 +2165,15 @@ namespace BlackjackCheat
 			y += kLineHeight;
 
 			// Session 9 sixth live bug report -- diagnostic, see
-			// kTableAnimationLockOffset's own comment above. Always shown
-			// (not gated by any toggle) so a live session can watch it
-			// change across a round transition without needing to flip
-			// anything on first.
-			{
-				std::int32_t tableState = ReadInt(thread, kTableSlot + kTableAnimationLockOffset);
-				DrawLine(x, y, "Table state (f_580, empirical): " + std::to_string(tableState) + " atBettingPhase=" + (atBettingPhase ? "yes" : "no"));
-				y += kLineHeight;
-			}
+			// kRoundPhaseOffset's own comment above (1=sat down,
+			// 2=waiting for bet, 3=bet placed/dealing, 7=a seat deciding,
+			// 8=dealer resolving/end of round -- NOT YET CONFIRMED across
+			// a second round in the same sitting). Always shown (not
+			// gated by any toggle) so a live session can watch it change
+			// across a round transition without needing to flip anything
+			// on first.
+			DrawLine(x, y, "Round phase f_701=" + std::to_string(roundPhase) + " atBettingPhase=" + (atBettingPhase ? "yes" : "no"));
+			y += kLineHeight;
 
 			if (cfg.ShowDealerHand && dealerHasCards)
 			{
@@ -2178,7 +2260,16 @@ namespace BlackjackCheat
 			// straight from the already-dealt hand struct (see
 			// PredictedHand's header comment) -- drawn as a card-face icon
 			// top-right, see DrawDealerHoleCardIcon()'s own header comment.
-			if (cfg.ShowDeckPrediction && dealerHand.count >= 2)
+			// `|| roundResolving` (see its own computation above) extends
+			// this through the dealer's own reveal: dealerHand.count>=2
+			// alone drops to false the instant func_718 resets for the
+			// next round, one script tick before the real on-screen flip
+			// animation is done, and ranks[0]/suits[0] are still the
+			// correct just-concluded values at that point (count resets
+			// before the card data itself is overwritten by the next
+			// deal) -- so this is exactly the same data DrawDealerHoleCardIcon()
+			// always drew, just kept visible a little longer.
+			if (cfg.ShowDeckPrediction && (dealerHand.count >= 2 || roundResolving))
 				DrawDealerHoleCardIcon(dealerHand.ranks[0], dealerHand.suits[0]); // Session 7: index 0 is the real hole card, not index 1 -- see PredictedHand's header comment above
 
 			// Session 9: pre-bet deal prediction, Release+Debug -- both of
@@ -2399,8 +2490,11 @@ namespace BlackjackCheat
 			reinterpret_cast<unsigned long long>(thread->m_Stack),
 			thread->m_Context.m_StackSize);
 
-		std::int32_t tableState = ReadInt(thread, kTableSlot + kTableAnimationLockOffset);
-		Log::Write("ProbeTableStruct: table state (f_580, slot {}, empirical -- see kTableAnimationLockOffset's own comment) = {} (0 = free to act on bets)", kTableSlot + kTableAnimationLockOffset, tableState);
+		std::int32_t roundState = ReadInt(thread, kTableSlot + kRoundStateOffset);
+		std::int32_t roundResolvingState = ReadInt(thread, kTableSlot + kRoundResolvingOffset);
+		std::int32_t roundPhaseState = ReadInt(thread, kTableSlot + kRoundPhaseOffset);
+		Log::Write("ProbeTableStruct: round phase (f_701, slot {}, EMPIRICAL, see kRoundPhaseOffset's own comment) = {} (1=sat down, 2=waiting for bet, 3=bet placed/dealing, 7=a seat deciding, 8=dealer resolving/end of round); round state (f_579, slot {}, CONFIRMED LIVE) = {} (0/5); round resolving (f_580, slot {}, CONFIRMED LIVE) = {} (1/0)",
+			kTableSlot + kRoundPhaseOffset, roundPhaseState, kTableSlot + kRoundStateOffset, roundState, kTableSlot + kRoundResolvingOffset, roundResolvingState);
 
 		std::int32_t mySeatByF9 = ReadInt(thread, kMySeatSlot);
 		std::int32_t mySeat = FindMySeatByPed(thread);

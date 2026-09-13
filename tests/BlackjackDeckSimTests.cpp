@@ -465,6 +465,30 @@ namespace
 			"12+Queen=22 is a certain bust regardless of rank -- this isn't a King-specific fix");
 	}
 
+	// Live bug report: soft 18 (A,7) with another seat still to act (so
+	// the fallback path triggers) and a known next card of 5 was advised
+	// Hit, which turned the hand into a hard 13 -- not a bust, but
+	// strictly worse than the 18 already in hand, and the fallback's
+	// bust-only override let it through untouched. A,7,5 demotes the ace
+	// (11+7+5=23 -> 1+7+5=13), so this must now override to Stand, the
+	// same way a known bust card already did.
+	void TestFallbackKnownDowngradeCardOverridesToStand()
+	{
+		std::printf("TestFallbackKnownDowngradeCardOverridesToStand:\n");
+
+		std::int32_t player[2] = { 14, 7 }; // A,7 = soft 18
+		std::int32_t dealer[2] = { 2, 10 }; // 12, must hit -- upcard 10 is a textbook Hit for soft 18
+		std::int32_t future[1] = { 5 }; // A,7,5 -> hard 13, not a bust but a certain downgrade from 18
+
+		BlackjackHandEval::Action textbook = BlackjackHandEval::GetBasicStrategyAction(player, 2, dealer[1], true, false, false);
+		Check(textbook == Action::Hit, "sanity check: plain textbook strategy (blind to the known card) says Hit here",
+			"soft 18 vs dealer upcard 10 is a textbook Hit, needed as the baseline this test overrides");
+
+		Action action = DetermineCheatAction(player, 2, dealer, 2, future, 1, /*canDouble*/ true, false, /*isLastSeatBeforeDealer*/ false);
+		Check(action == Action::Stand, "a known non-bust downgrade card overrides the fallback's Hit suggestion to Stand",
+			"A,7,5=13 never busts but is strictly worse than the 18 already in hand, regardless of what basic strategy says blind to that card, and regardless of other seats -- it's this hand's own turn, so the next card is exact either way");
+	}
+
 	// A dealer already standing pat is trusted even with another seat
 	// still to act -- same rule as the Session 11 test, but against a
 	// dealer 18 instead of 20 (a Double, not just a Hit), to confirm the
@@ -756,6 +780,7 @@ int main()
 	TestPushCanBeUpgradedOrMustBeProtected();
 	TestFallbackStillHitsWhenTheKnownCardIsSafe();
 	TestFallbackBustOverrideWithAQueen();
+	TestFallbackKnownDowngradeCardOverridesToStand();
 	TestDealerPatAtEighteenTrustsDoubleRegardlessOfOtherSeats();
 	TestDealerDrawSharesTheSameCursorAsAPlayerHit();
 	TestFallbackWithNoFutureCardsIsSafe();
