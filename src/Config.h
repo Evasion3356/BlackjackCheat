@@ -56,7 +56,7 @@ namespace Config
 		// Standalone advice readout (hit/stand/double/split), separate
 		// from the text panel -- same convention as PokerCheat's
 		// WinPredictionX/Y.
-		float AdviceX = 0.48f;
+		float AdviceX = 0.4f;
 		float AdviceY = 0.5f;
 
 		// Dealer hole-card icon, drawn top-right -- same calibrated spot
@@ -74,8 +74,7 @@ namespace Config
 		// "Next cards (if you Hit)" icon strip, drawn to the right of the
 		// "Next cards:" label -- see BlackjackCheat.cpp's
 		// DrawNextCardIcons(). BaseX user-confirmed via live Reload Config
-		// tuning (0.62 initial guess -> 0.55).
-		float NextCardIconBaseX = 0.55f;
+		float NextCardIconBaseX = 0.48f;
 		float NextCardIconY = 0.59f;
 		float NextCardIconSpacingX = 0.03f;
 		float NextCardIconWidth = 0.025f;
@@ -90,7 +89,7 @@ namespace Config
 		// live Reload Config tuning (0.2/0.2 initial guess -> these) --
 		// same process HoleCardIconX/NextCardIconBaseX already went
 		// through.
-		float MyHandIconX = 0.13f;
+		float MyHandIconX = 0.14f;
 		float MyHandIconY = 0.925f;
 		float MyHandIconSpacingX = 0.02f;
 		float MyHandIconWidth = 0.02f;

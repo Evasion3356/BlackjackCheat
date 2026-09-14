@@ -1754,7 +1754,7 @@ namespace BlackjackCheat
 		// over verbatim). Shown in both Debug and Release, same as
 		// PokerCheat's DrawWinPredictionStatus.
 #ifndef _DEBUG
-		constexpr float kReleaseAdviceX = 0.48f;
+		constexpr float kReleaseAdviceX = 0.4f;
 		constexpr float kReleaseAdviceY = 0.5f;
 #endif
 
@@ -1972,7 +1972,7 @@ namespace BlackjackCheat
 		// below (user request) specifically to free this spot up so the
 		// betting-phase view could show a same-position "next cards"
 		// preview matching the post-deal one.
-		constexpr float kReleaseNextCardIconBaseX = 0.55f; // user-confirmed via live Reload Config tuning (0.62 initial guess -> 0.55)
+		constexpr float kReleaseNextCardIconBaseX = 0.48f;
 		constexpr float kReleaseNextCardIconY = 0.59f;
 		constexpr float kReleaseNextCardIconSpacingX = 0.03f;
 		constexpr float kReleaseNextCardIconWidth = 0.025f;
@@ -1985,7 +1985,7 @@ namespace BlackjackCheat
 		// same process NextCardIconBaseX/HoleCardIconX already went
 		// through (see Config.h's MyHandIconX/Y for the Debug-tunable
 		// equivalent).
-		constexpr float kReleaseMyHandIconX = 0.13f;
+		constexpr float kReleaseMyHandIconX = 0.14f;
 		constexpr float kReleaseMyHandIconY = 0.925f;
 		constexpr float kReleaseMyHandIconSpacingX = 0.02f;
 		constexpr float kReleaseMyHandIconWidth = 0.02f;
