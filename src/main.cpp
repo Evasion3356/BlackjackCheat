@@ -4,7 +4,7 @@
 	(itself matching the ScriptHookRDR2 SDK's NativeTrainer sample).
 */
 
-#include "..\..\ScriptHookSDK\inc\main.h"
+#include "..\external\ScriptHookSDK\inc\main.h"
 #include "script.h"
 #include "keyboard.h"
 #include "Config.h"
