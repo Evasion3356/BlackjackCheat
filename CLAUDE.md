@@ -87,6 +87,13 @@ call, never a manual fixed-size buffer upstream of it. This applies even
 when porting/adapting code from `../PokerCheat`, which still has some
 older char[]-based helpers of its own -- don't carry that pattern over.
 
+**Strings: `std::string_view` for read-only text.** `Localization`'s
+tables are `constexpr std::string_view` and its getters return
+`std::string_view`. Per-frame Release HUD text must not allocate: build it
+into a reused `static std::string` (`WrapBgFormatText`) rather than
+concatenating temporaries or using `ostringstream`. Debug-only text can keep
+`std::string`/`ostringstream`.
+
 ## Build & deploy
 
 ```

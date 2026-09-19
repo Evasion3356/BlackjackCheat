@@ -41,6 +41,7 @@
 
 #include "BlackjackHandEval.h" // Action, BettingConfidence
 #include <cstdint>
+#include <string_view>
 
 namespace Localization
 {
@@ -90,21 +91,21 @@ namespace Localization
 
 	// HIT/STAND/DOUBLE/SPLIT advice readout. Uses Current() for the
 	// language.
-	const char* ActionName(BlackjackHandEval::Action action);
+	std::string_view ActionName(BlackjackHandEval::Action action);
 
 	// BET LOW/MEDIUM/HIGH betting-confidence readout. Uses Current() for
 	// the language.
-	const char* BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence);
+	std::string_view BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence);
 
 	// "Insurance: YES"/"Insurance: No" readout. Uses Current() for the
 	// language.
-	const char* InsuranceLabel(bool takeInsurance);
+	std::string_view InsuranceLabel(bool takeInsurance);
 
 	// "Next cards:" label, shown above the next-card-if-you-Hit icon
 	// strip. Uses Current() for the language.
-	const char* NextCardsLabel();
+	std::string_view NextCardsLabel();
 
 	// Short language code ("en-US", "fr-FR", ...) for a given language --
 	// purely for logging, not used by anything Release-facing.
-	const char* LanguageCode(Language lang);
+	std::string_view LanguageCode(Language lang);
 }

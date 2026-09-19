@@ -836,7 +836,10 @@
 #include "Localization.h"
 #include "script.h"
 
+#include <array>
+#include <charconv>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <iomanip>
 
@@ -1138,12 +1141,22 @@ namespace BlackjackCheat
 		// wrapper, shared by every Draw*Status function below -- another
 		// spot the old code rebuilt by hand into a fixed char[192]/[256]
 		// buffer via sprintf_s each time.
-		std::string WrapBgFormatText(const std::string& label, int fontSize)
+		//
+		// Builds into one reused buffer, so the per-frame HUD text does no heap
+		// allocation once its capacity has grown. The returned pointer is valid
+		// until the next call.
+		const char* WrapBgFormatText(std::string_view label, int fontSize)
 		{
-			std::ostringstream oss;
-			oss << "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='"
-				<< fontSize << "'>~s~" << label << "</FONT></P><TEXTFORMAT>";
-			return oss.str();
+			static std::string buffer;
+			std::array<char, 12> digits{};
+			const auto sizeEnd = std::to_chars(digits.data(), digits.data() + digits.size(), fontSize).ptr;
+
+			buffer.assign("<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='");
+			buffer.append(digits.data(), sizeEnd);
+			buffer.append("'>~s~");
+			buffer.append(label);
+			buffer.append("</FONT></P><TEXTFORMAT>");
+			return buffer.c_str();
 		}
 
 		// Reads one hand struct (dealer's Table.f_2, or a seat's
@@ -1777,10 +1790,10 @@ namespace BlackjackCheat
 				case BlackjackHandEval::Action::Split: r = 180; g = 255; b = 180; break;
 			}
 
-			std::string formatText = WrapBgFormatText(Localization::ActionName(action), 40);
+			const char* formatText = WrapBgFormatText(Localization::ActionName(action), 40);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), adviceX, adviceY);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), adviceX, adviceY);
 		}
 
 		// Session 13 addition -- Betting Advice, same pipeline/convention
@@ -1814,10 +1827,10 @@ namespace BlackjackCheat
 				case BlackjackHandEval::BettingConfidence::High: r = 140; g = 255; b = 140; break;
 			}
 
-			std::string formatText = WrapBgFormatText(Localization::BettingConfidenceLabel(confidence), 32);
+			const char* formatText = WrapBgFormatText(Localization::BettingConfidenceLabel(confidence), 32);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
 		}
 
 		// Same pipeline/convention as DrawAdviceStatus -- positioned just
@@ -1837,13 +1850,13 @@ namespace BlackjackCheat
 			float x = kReleaseAdviceX;
 			float y = kReleaseAdviceY + kReleaseInsuranceYOffset;
 #endif
-			const char* label = Localization::InsuranceLabel(takeInsurance);
+			const std::string_view label = Localization::InsuranceLabel(takeInsurance);
 			int r = takeInsurance ? 180 : 200, g = takeInsurance ? 255 : 200, b = takeInsurance ? 180 : 200;
 
-			std::string formatText = WrapBgFormatText(label, 26);
+			const char* formatText = WrapBgFormatText(label, 26);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
 		}
 
 		// Dealer's real hole card, PRIMARY feature as of Session 4 -- exact
@@ -2038,10 +2051,10 @@ namespace BlackjackCheat
 			float x = kReleaseAdviceX;
 			float y = kReleaseAdviceY + kReleaseNextCardYOffset;
 #endif
-			std::string formatText = WrapBgFormatText(Localization::NextCardsLabel(), 26);
+			const char* formatText = WrapBgFormatText(Localization::NextCardsLabel(), 26);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(180, 255, 220, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), x, y);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
 
 			DrawNextCardIcons(ranks, suits, count);
 		}

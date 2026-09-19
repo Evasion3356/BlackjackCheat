@@ -4,6 +4,7 @@
 #include "script.h" // LANGUAGE::_GET_CURRENT_LANGUAGE_ID() (natives.h, via script.h)
 
 #include <string>
+#include <string_view>
 
 namespace
 {
@@ -31,7 +32,7 @@ namespace
 	// actual imperative a Polish table would use) -- fix a row directly
 	// here if a wording turns out to be wrong.
 	constexpr int kActionLabelCount = 4;
-	const char* const kActionLabels[kLanguageCount][kActionLabelCount] =
+	constexpr std::string_view kActionLabels[kLanguageCount][kActionLabelCount] =
 	{
 		{ "HIT", "STAND", "DOUBLE", "SPLIT" },                     // en-US
 		{ "TIRER", "RESTER", "DOUBLER", "SÉPARER" },                // fr-FR -- confirmed against regles.com/le-black-jack.com
@@ -58,7 +59,7 @@ namespace
 	// had stripped, now that BlackjackCheat.vcxproj carries /utf-8),
 	// not the same source-verification kActionLabels above got.
 	constexpr int kBettingConfidenceLabelCount = 3;
-	const char* const kBettingConfidenceLabels[kLanguageCount][kBettingConfidenceLabelCount] =
+	constexpr std::string_view kBettingConfidenceLabels[kLanguageCount][kBettingConfidenceLabelCount] =
 	{
 		{ "BET LOW", "BET MEDIUM", "BET HIGH" },                          // en-US
 		{ "MISE FAIBLE", "MISE MOYENNE", "MISE ÉLEVÉE" },                  // fr-FR
@@ -87,7 +88,7 @@ namespace
 	// exactly); only the YES/No half needed fixing (accents, and the
 	// ja-JP transliteration).
 	constexpr int kInsuranceLabelCount = 2;
-	const char* const kInsuranceLabels[kLanguageCount][kInsuranceLabelCount] =
+	constexpr std::string_view kInsuranceLabels[kLanguageCount][kInsuranceLabelCount] =
 	{
 		{ "Insurance: YES", "Insurance: No" },                       // en-US
 		{ "Assurance : OUI", "Assurance : Non" },                     // fr-FR
@@ -110,7 +111,7 @@ namespace
 	// diacritics pass applies here -- restoring accents an earlier
 	// ASCII-safety pass had stripped, now that /utf-8 is confirmed
 	// working end-to-end.
-	const char* const kNextCardsLabel[kLanguageCount] =
+	constexpr std::string_view kNextCardsLabel[kLanguageCount] =
 	{
 		"Next cards:",        // en-US
 		"Prochaines cartes:", // fr-FR
@@ -194,7 +195,7 @@ namespace Localization
 		return g_current;
 	}
 
-	const char* ActionName(BlackjackHandEval::Action action)
+	std::string_view ActionName(BlackjackHandEval::Action action)
 	{
 		int col = static_cast<int>(action);
 		if (col < 0 || col >= kActionLabelCount)
@@ -202,7 +203,7 @@ namespace Localization
 		return kActionLabels[static_cast<int>(Current())][col];
 	}
 
-	const char* BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence)
+	std::string_view BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence)
 	{
 		int col = static_cast<int>(confidence);
 		if (col < 0 || col >= kBettingConfidenceLabelCount)
@@ -210,17 +211,17 @@ namespace Localization
 		return kBettingConfidenceLabels[static_cast<int>(Current())][col];
 	}
 
-	const char* InsuranceLabel(bool takeInsurance)
+	std::string_view InsuranceLabel(bool takeInsurance)
 	{
 		return kInsuranceLabels[static_cast<int>(Current())][takeInsurance ? 0 : 1];
 	}
 
-	const char* NextCardsLabel()
+	std::string_view NextCardsLabel()
 	{
 		return kNextCardsLabel[static_cast<int>(Current())];
 	}
 
-	const char* LanguageCode(Language lang)
+	std::string_view LanguageCode(Language lang)
 	{
 		switch (lang)
 		{
