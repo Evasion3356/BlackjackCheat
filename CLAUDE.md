@@ -117,10 +117,24 @@ test menu and the `Probe*` diagnostics (see below) -- Release enables the
 advisor unconditionally with no menu at all, same convention as
 PokerCheat.
 
-Runtime log: `<game folder>\BlackjackCheat.log`, written by `Log::Write`
-(see `src/Log.h`).
+Runtime log: `<game folder>\BlackjackCheat.log` -- or
+`%LOCALAPPDATA%\RDR2ASIMods\BlackjackCheat.log` when the game folder isn't
+writable (e.g. a C:\Program Files install; the file's first line then names
+the rejected path). See `src/LogFallback.h`, vendored identically into every
+sibling project.
 
 ## Tests
+
+`tests/LogFallbackTests.vcxproj` checks that logging falls back to
+`%LOCALAPPDATA%\RDR2ASIMods\` instead of throwing when the game folder can't
+be written (it points the logger at `C:\Windows\System32` -- skipped when run
+elevated -- and at a path through a regular file). Same test, vendored into
+every sibling project:
+
+```
+"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" tests\LogFallbackTests.vcxproj /p:Configuration=Debug /p:Platform=x64 /nologo /v:minimal
+bin\Debug\LogFallbackTests.exe
+```
 
 `tests/BlackjackHandEvalTests.vcxproj` unit-tests `src/BlackjackHandEval.h`
 (hand value + basic strategy) in complete isolation from the game -- plain
@@ -190,14 +204,12 @@ PokerCheat/CollectorOffline).
   placeholders (compile-time checked), not printf's `%d`/`%s`. Replaced
   an earlier hand-rolled version that reopened the file with
   `fopen_s`/`fclose` on every call (synchronous, and not safe against
-  concurrent callers). Debug uses a plain SYNCHRONOUS spdlog logger;
-  Release uses spdlog's ASYNC logger (1 background thread) -- this split
-  is deliberate, not a placeholder: a live eject/reinject hang was traced
-  to the async thread pool's destructor joining its worker thread from
-  inside `DLL_PROCESS_DETACH` (a well-known Windows deadlock trap), which
-  this project's Debug-heavy build-eject-reinject workflow hits
-  constantly and Release effectively never does -- see that header's own
-  header comment and `docs/JOURNAL.md`'s Session 9 fourth finding for the
+  concurrent callers). SYNCHRONOUS in both Debug and Release: an earlier
+  Release-only ASYNC logger was dropped after a live eject/reinject hang
+  was traced to the async thread pool's destructor joining its worker
+  thread from inside `DLL_PROCESS_DETACH` (a well-known Windows deadlock
+  trap) -- see that header's own header comment and `docs/JOURNAL.md`'s
+  Session 9 fourth finding for the
   full mechanism and the one open caveat (Release's own risk at ordinary
   game-exit DLL_PROCESS_DETACH, not yet tested).
 - `src/GamePointers.h/.cpp`, `src/PatternScan.h/.cpp` -- generic
@@ -215,7 +227,7 @@ PokerCheat/CollectorOffline).
 
 ## External resources
 
-- `D:\Backup\Stuff\RDR2 Shit\Scripts\rdr2-scripts-decompiled\1491.50\script_rel\bjack_sp.ysc.c`
+- `D:\Backup\Stuff\RDR2 Shit\Scripts\1491.50\script_rel\bjack_sp.ysc.c`
   -- the actual target, already decompiled for our exact game build
   (1491.50), ~42k lines. `bjack_launch_sp.ysc.c` (~16.5k lines) is the
   launcher/wrapper. No `act_gen_blackjack.ysc.c`-style shared framework
@@ -250,6 +262,10 @@ PokerCheat/CollectorOffline).
   arithmetic, same as PokerCheat).
 
 ## Next concrete step
+
+(Partly out of date: Sessions 6-9 have since live-confirmed several of
+these offsets -- each constant's own comment in `src/BlackjackCheat.cpp`
+says which. The checklist below is the original plan.)
 
 None of `src/BlackjackCheat.cpp`'s struct offsets have been checked
 against a live game, even the ones now rated HIGH confidence from static

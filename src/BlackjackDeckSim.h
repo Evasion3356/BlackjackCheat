@@ -152,10 +152,21 @@ namespace BlackjackDeckSim
 		return outcome == Outcome::Win ? 2 : (outcome == Outcome::Loss ? 0 : 1);
 	}
 
-	inline Outcome CompareOutcome(const BlackjackHandEval::HandValue& player, const BlackjackHandEval::HandValue& dealer)
+	// Naturals: a dealer blackjack beats any player hand except a player
+	// natural (push), and a player natural beats any dealer hand except a
+	// dealer natural. A two-card 21 on a SPLIT hand isn't a natural -- pass
+	// playerNaturalCounts=false for those. Without this, 21 vs a dealer
+	// blackjack and a natural vs a three-card 21 both read as a push.
+	inline Outcome CompareOutcome(const BlackjackHandEval::HandValue& player, const BlackjackHandEval::HandValue& dealer,
+		bool playerNaturalCounts = true)
 	{
 		if (player.bust)
 			return Outcome::Loss;
+		const bool playerNatural = playerNaturalCounts && player.blackjack;
+		if (dealer.blackjack)
+			return playerNatural ? Outcome::Push : Outcome::Loss;
+		if (playerNatural)
+			return Outcome::Win;
 		if (dealer.bust)
 			return Outcome::Win;
 		if (player.total > dealer.total)
@@ -503,7 +514,8 @@ namespace BlackjackDeckSim
 		std::int32_t dealerFutureOffset = hand2FutureOffset + hand2.consumed;
 		DealerSimResult dealerForSplit = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + dealerFutureOffset, futureCount - dealerFutureOffset);
 
-		std::int32_t splitValue = OutcomeValue(CompareOutcome(hand1.value, dealerForSplit.value)) + OutcomeValue(CompareOutcome(hand2.value, dealerForSplit.value));
+		std::int32_t splitValue = OutcomeValue(CompareOutcome(hand1.value, dealerForSplit.value, /*playerNaturalCounts*/ false))
+			+ OutcomeValue(CompareOutcome(hand2.value, dealerForSplit.value, /*playerNaturalCounts*/ false));
 
 		result.trustworthy = true;
 		result.shouldSplit = splitValue > noSplitValue;

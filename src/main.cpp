@@ -10,8 +10,6 @@
 #include "..\external\ScriptHookSDK\inc\main.h"
 #include "script.h"
 #include "keyboard.h"
-#include "Config.h"
-#include "GamePointers.h"
 #include "Log.h"
 
 #ifdef _DEBUG
@@ -70,23 +68,12 @@ BOOL APIENTRY DllMain(HMODULE hInstance, DWORD reason, LPVOID lpReserved)
 		TraceProcessContext(hInstance, reason, lpReserved);
 #endif
 
-		// Plain synchronous call, no worker thread -- see PokerCheat's
-		// Config.cpp/Config.h header comment for why an earlier mINI-based
-		// version of that file needed one and inipp doesn't.
-		Log::Trace("DllMain: Config::Reload begin");
-		Config::Reload();
-		Log::Trace("DllMain: Config::Reload done");
-
-		// Eagerly resolve the live scrThread pool here too (see
-		// PokerCheat's main.cpp for why this belongs in DllMain rather
-		// than lazily on the first toggle -- avoids landing the AOB scan's
-		// one-time cost on the first "Toggle Blackjack Cheat" press).
-		Log::Trace("DllMain: GamePointers::GetScriptThreads begin");
-		{
-			[[maybe_unused]] auto threads = GamePointers::GetScriptThreads();
-			Log::Trace("DllMain: GamePointers::GetScriptThreads done, result=0x{:X}", reinterpret_cast<std::uintptr_t>(threads));
-		}
-
+		// Nothing but registration here. Config::Reload() (file I/O) and
+		// GamePointers::GetScriptThreads() (a scan of RDR2.exe's whole image)
+		// used to run here, under the loader lock and -- with an early ASI
+		// loader -- possibly before RDR2.exe has finished unpacking (a failed
+		// scan was then cached for the session). ScriptMain does both first
+		// thing instead (see script.cpp).
 		Log::Trace("DllMain: scriptRegister begin");
 		scriptRegister(hInstance, ScriptMain);
 		Log::Trace("DllMain: scriptRegister done");

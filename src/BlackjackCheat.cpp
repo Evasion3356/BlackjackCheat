@@ -976,7 +976,7 @@ namespace BlackjackCheat
 	constexpr std::uint32_t kMaxHandsPerSeat = 2;     // CONFIRMED cap via func_1237 case 6 (`f_59 > 1` blocks split) -- HIGH confidence (Session 2)
 	constexpr std::uint32_t kSeatBankrollOffset = 1;  // seat.f_1 -- MEDIUM confidence (Session 2). Session 10: now also read live by OnTick()'s advice loop (see the canDouble computation below) -- a live-reported bug had advice recommend Double with insufficient bankroll, since canDouble previously only checked card count, never the game's own bankroll-vs-bet legality gate (`f_1 >= f_4[handIndex]`, BlackjackHandEval.h's own header comment).
 	constexpr std::uint32_t kSeatBetOffset = 4;       // seat.f_4[handIndex] -- MEDIUM confidence (Session 2). Session 10: now also read live by OnTick()'s advice loop for the same canDouble bankroll check above -- previously only Probe-only/SimulatePreDeal.
-	constexpr std::uint32_t kSeatCurrentHandIndexOffset = 3; // seat.f_3 -- HIGH confidence (Session 5, f_N=offset+N convention + func_1063's direct f_3<f_59 comparison), not read by OnTick(), Probe-only
+	constexpr std::uint32_t kSeatCurrentHandIndexOffset = 3; // seat.f_3 -- HIGH confidence (Session 5, f_N=offset+N convention + func_1063's direct f_3<f_59 comparison), static trace only. Read by DrawOverlay() to pick which split hand gets advice, with a first-live-hand fallback if it reads out of range
 	constexpr std::uint32_t kSeatBetConfirmedOffset = 7; // seat.f_7 -- CONFIRMED LIVE (Session 9 live addendum): a before/after dump pair caught it reading 0 for the human seat pre-confirm and 1 post-confirm, while both NPC seats already read 1 in BOTH dumps (they lock in instantly; the table visibly waits on the human) -- exactly the func_1056 mechanism this was traced from. func_759 (line ~27401) reads exactly `seat.f_7`, and that same field is what func_1056 requires nonzero on EVERY occupied seat before the table leaves state 0 for the next round, and what func_1057 (the actual initial-deal function) checks per-seat before dealing into it -- i.e. this is the real "this seat's bet is locked in" flag, not merely "a bet amount is set" (that's kSeatBetOffset/f_4[0], checked separately by both of those same functions). Not read by OnTick(), Probe-only as of Session 9's occupancy-only simplification (see SimulatePreDeal()'s own header comment) -- still a real, confirmed field, just no longer this file's gate for who's about to be dealt in.
 
 	constexpr std::uint32_t kHandStride = 25;         // words per hand struct (dealer's and every seat hand's)
@@ -2383,14 +2383,34 @@ namespace BlackjackCheat
 				if (!isMe || !dealerHasCards)
 					continue;
 
+				// After a split, only the hand actually being played gets
+				// advice. The previous version advised every live hand in turn
+				// and showed whichever came LAST -- i.e. hand 1's advice while
+				// you were still playing hand 0. seat.f_3 is the game's own
+				// "current hand" index (func_1063 compares it against f_59);
+				// if it reads out of range, fall back to the FIRST live hand,
+				// since split hands are played in order.
+				std::int32_t currentHandIndex = ReadInt(thread, seatBase + kSeatCurrentHandIndexOffset);
+				const bool currentHandIndexValid = currentHandIndex >= 0 && currentHandIndex < handCount;
+
 				for (std::int32_t h = 0; h < handCount; h++)
 				{
+					if (currentHandIndexValid && h != currentHandIndex)
+						continue;
+
 					std::uint32_t handSlot = seatBase + kSeatHandsOffset + static_cast<std::uint32_t>(h) * kHandStride;
 					HandCards hand = ReadHand(thread, handSlot);
 					if (hand.count <= 0)
 						continue;
 
 					BlackjackHandEval::HandValue value = BlackjackHandEval::EvaluateHand(hand.ranks, hand.count);
+
+					// A later split hand of MINE still draws from the deck
+					// before the dealer does, exactly like a higher occupied
+					// seat -- so the dealer simulation only holds for the
+					// last of my hands (BlackjackDeckSim::EvaluateSplit()
+					// already models its own first hand this way).
+					const bool isLastBeforeDealer = isMySeatLastBeforeDealer && h == handCount - 1;
 
 					// Session 10 live bug fix: canDouble previously
 					// only checked card count, so advice would
@@ -2438,9 +2458,9 @@ namespace BlackjackCheat
 					if (!value.bust && value.total < 21)
 					{
 						haveValidHand = true;
-						if (cfg.ShowAdvice)
+						if (cfg.ShowAdvice && !haveAdvice)
 						{
-							bestAction = DetermineAdvice(thread, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isMySeatLastBeforeDealer); // Session 7 fourth/sixth addendum: deck-derived simulation (BlackjackDeckSim.h), not blind basic strategy -- see that function's own header comment. isMySeatLastBeforeDealer: Session 9 second live bug fix, see DetermineAdvice()'s own header comment
+							bestAction = DetermineAdvice(thread, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isLastBeforeDealer); // Session 7 fourth/sixth addendum: deck-derived simulation (BlackjackDeckSim.h), not blind basic strategy -- see that function's own header comment. isMySeatLastBeforeDealer: Session 9 second live bug fix, see DetermineAdvice()'s own header comment
 							haveAdvice = true;
 						}
 					}

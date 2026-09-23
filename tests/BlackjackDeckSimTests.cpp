@@ -757,6 +757,27 @@ namespace
 		HandValue dealerBust; dealerBust.bust = true; dealerBust.total = 26;
 		Check(CompareOutcome(playerGood, dealerBust) == Outcome::Win, "a non-bust player always beats a busted dealer", "dealer bust overrides the totals comparison");
 	}
+
+	void TestNaturalsBeatThreeCardTwentyOne()
+	{
+		std::printf("TestNaturalsBeatThreeCardTwentyOne:\n");
+
+		const std::int32_t natural[2] = { 14, 13 };       // A,K
+		const std::int32_t threeCard21[3] = { 7, 7, 7 };  // 7,7,7
+		const HandValue naturalValue = EvaluateHand(natural, 2);
+		const HandValue threeCardValue = EvaluateHand(threeCard21, 3);
+
+		Check(CompareOutcome(threeCardValue, naturalValue) == Outcome::Loss,
+			"a three-card 21 loses to a dealer blackjack", "was a push when only totals were compared");
+		Check(CompareOutcome(naturalValue, threeCardValue) == Outcome::Win,
+			"a player natural beats a dealer three-card 21", "was a push when only totals were compared");
+		Check(CompareOutcome(naturalValue, naturalValue) == Outcome::Push,
+			"natural vs natural is a push", "both blackjacks");
+		Check(CompareOutcome(naturalValue, threeCardValue, /*playerNaturalCounts*/ false) == Outcome::Push,
+			"a two-card 21 on a split hand is just 21, not a natural", "split A,10 pushes a dealer 21");
+		Check(CompareOutcome(naturalValue, naturalValue, /*playerNaturalCounts*/ false) == Outcome::Loss,
+			"a split two-card 21 loses to a dealer blackjack", "split hands can't have a natural");
+	}
 }
 
 int main()
@@ -796,6 +817,7 @@ int main()
 	TestBettingConfidenceWinViaDoubleIsMedium();
 	TestBettingConfidencePushAndLossAreBothLow();
 	TestOutcomeRanking();
+	TestNaturalsBeatThreeCardTwentyOne();
 
 	if (g_failures == 0)
 	{

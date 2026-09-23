@@ -15,6 +15,7 @@
 #include "BlackjackCheat.h"
 #include "Config.h"
 #include "Localization.h"
+#include "GamePointers.h"
 
 namespace
 {
@@ -55,7 +56,12 @@ void ScriptMain()
 	Log::Write("BlackjackCheat started");
 	Log::Trace("ScriptMain: entered on script fiber, tid={}", GetCurrentThreadId());
 
-	// Config is loaded from DllMain, not here -- see main.cpp.
+	// Startup work that used to live in DllMain -- see main.cpp for why.
+	Log::Trace("ScriptMain: Config::Reload begin");
+	Config::Reload();
+	Log::Trace("ScriptMain: GamePointers::GetScriptThreads begin");
+	GamePointers::GetScriptThreads();
+	Log::Trace("ScriptMain: startup done");
 
 #ifdef _DEBUG
 	// Debug-only -- the F11 test menu (toggle, probes) is a dev-tuning
