@@ -5,6 +5,36 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.4.0] - 2026-09-23
+
+### Fixed
+- The game no longer crashes on the loading screen when
+  `BlackjackCheat.log` can't be written. This was the 1.3.0 load-screen
+  crash: the mod failed to create its log during game load and took the
+  game down with it, before any log existed.
+- If the game folder can't be written (e.g. a `C:\Program Files` install,
+  or a read-only/locked log file), the log now goes to
+  `%LOCALAPPDATA%\RDR2ASIMods\BlackjackCheat.log` instead, and its first line
+  names the path that couldn't be used.
+- After a split, advice is now shown for the hand you're actually playing.
+  Previously it could show the other hand's advice.
+- While a later split hand of yours still has to be played, advice no
+  longer assumes the next cards go straight to the dealer. That hand draws
+  first, so the dealer prediction wasn't reliable yet.
+- Naturals are scored correctly in advice and betting confidence: a
+  dealer blackjack beats a three-card 21, a player blackjack beats a
+  dealer's three-card 21, and a two-card 21 after a split is not a
+  blackjack.
+- Loads reliably even when an ASI loader injects the mod before RDR2 has
+  finished unpacking itself. Startup work moved out of the DLL's load
+  callback, and a failed memory scan is retried instead of leaving the mod
+  inactive for the whole session.
+
+### Changed
+- Default HUD positions of the advice line and your hand's card icons
+  adjusted.
+- The Release HUD no longer allocates memory every frame.
+
 ## [1.3.0] - 2026-09-13
 
 ### Added
