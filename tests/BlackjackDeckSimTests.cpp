@@ -296,8 +296,8 @@ namespace
 	// hand/next-card combinations. This is not a rewrite of
 	// DetermineCheatAction()/EvaluateSplit() -- both were already fully
 	// deterministic (every decision here comes from real, known future
-	// cards, never a probability or a running count; BlackjackCardCounting.h
-	// has been dead code, unused by the actual advice path, since Session
+	// cards, never a probability or a running count; card counting
+	// was removed from the advice path entirely in Session
 	// 7) -- it's proof of that claim across enough distinct situations to
 	// trust it, rather than just asserting it. Every expected outcome
 	// below was hand-derived from the exact same card arithmetic

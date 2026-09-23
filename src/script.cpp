@@ -53,6 +53,7 @@ namespace
 void ScriptMain()
 {
 	Log::Write("BlackjackCheat started");
+	Log::Trace("ScriptMain: entered on script fiber, tid={}", GetCurrentThreadId());
 
 	// Config is loaded from DllMain, not here -- see main.cpp.
 
@@ -67,22 +68,40 @@ void ScriptMain()
 	// anyway since a wrong-offset read just shows garbage/nothing on
 	// screen, not a crash (ReadScriptLocal bounds-checks against the
 	// thread's real stack size).
+	Log::Trace("ScriptMain: BuildMenu begin");
 	BuildMenu();
+	Log::Trace("ScriptMain: BuildMenu done");
 #else
 	// SetEnabled(true), not Toggle() -- idempotent against ScriptMain
 	// ever being re-entered (see BlackjackCheat.h's SetEnabled comment).
 	BlackjackCheat::SetEnabled(true);
 #endif
 
+	Log::Trace("ScriptMain: entering tick loop");
+#ifdef _DEBUG
+	bool firstTickTraced = false;
+#endif
+
 	while (true)
 	{
 #ifdef _DEBUG
+		if (!firstTickTraced)
+			Log::Trace("ScriptMain: first tick begin");
+
 		if (!g_menuController.HasActiveMenu() && MenuInput::MenuSwitchPressed())
 			g_menuController.PushMenu(g_mainMenu);
 
 		g_menuController.Update();
 #endif
 		BlackjackCheat::OnTick();
+
+#ifdef _DEBUG
+		if (!firstTickTraced)
+		{
+			Log::Trace("ScriptMain: first tick OnTick done, yielding");
+			firstTickTraced = true;
+		}
+#endif
 
 		WAIT(0);
 	}

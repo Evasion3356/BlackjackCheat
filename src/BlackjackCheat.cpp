@@ -224,8 +224,8 @@
 	  same array via func_458+func_933 -- at the start of every single
 	  round. HIGH confidence (exact, unambiguous loop bounds; a real call
 	  site tying the rebuild to every round, not just game startup). This
-	  matters for card counting (see BlackjackCardCounting.h's own header
-	  comment) and means BlackjackHandEval.h's basic-strategy chart, which
+	  made card counting near-worthless here (since removed, see the
+	  Session 7 FIFTH addendum below) and means BlackjackHandEval.h's basic-strategy chart, which
 	  still assumes a 4-8 deck shoe, has NOT been corrected for
 	  single-deck play -- a known, flagged gap, not a silent assumption.
 	- A NEW, more reliable candidate for "my seat" than uLocal_14.f_9:
@@ -282,8 +282,8 @@
 	ahead of time straight off the deck array. See SimulateDealerOutcome()/
 	PredictedHand/UpdateDeckPrediction()/DrawDealerHoleCardStatus()/
 	ProbeDeckPrediction() below -- this is now the PRIMARY feature (Release
-	+Debug), with card counting (BlackjackCardCounting.h) demoted to
-	secondary/Debug-only, since direct reading is strictly better
+	+Debug), with card counting demoted to secondary/Debug-only (later
+	removed entirely, see the Session 7 FIFTH addendum below), since direct reading is strictly better
 	information than estimating from a count once the deck itself is
 	readable. UpdateDeckPrediction() also self-validates the dealer
 	draw-out prediction automatically every round via a "PredictionCheck"
@@ -609,12 +609,11 @@
 	this file: UpdateCardCounting() and its running-count state are
 	deleted, the Debug-only "Count (secondary)" panel line and
 	Config::Values::ShowCardCount toggle are gone, and ProbeTableStruct()
-	no longer logs a count line. The header/tests project
+	no longer logs a count line. The now-unused header/tests project
 	(BlackjackCardCounting.h, tests/BlackjackCardCountingTests.vcxproj)
-	are left on disk unused rather than deleted outright (this project
-	folder has no version control, see environment notes, so deleting
-	files here has no undo) -- say so explicitly if you also want those
-	removed from disk/the solution.
+	were initially left on disk, then deleted outright once the project
+	was under git (user request) -- recoverable from git history if ever
+	needed.
 	  - Hit/Stand/Double advice (previously BlackjackHandEval::
 	    GetBasicStrategyAction(), pure textbook probability, blind to the
 	    actual next card by design) is replaced by DetermineCheatAction()

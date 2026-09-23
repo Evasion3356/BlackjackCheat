@@ -40,12 +40,12 @@ cursor every tick instead of freezing a single round-start guess, so it's
 provably exact by the time the dealer's real turn begins, with no need to
 replicate the AI's own decision table. A separate frozen round-start
 baseline still self-validates automatically every round via a Debug-only
-"PredictionCheck" log line, no F11 interaction needed. Card counting
-(`src/BlackjackCardCounting.h`, Hi-Lo running/true count + insurance/
-16-vs-10 deviations) is SECONDARY -- kept because it's still correct and
-tested, but superseded by direct deck reads for this specific game.
+"PredictionCheck" log line, no F11 interaction needed. There is NO card
+counting anywhere in this project -- direct deck reads make it pointless
+(removed from the mod in Session 7; the leftover header and its test
+project were deleted afterward, recoverable from git history).
 `src/BlackjackHandEval.h` (hand value + basic-strategy hit/stand/double/
-split logic) and `BlackjackCardCounting.h` are both pure math with NO
+split logic) and `src/BlackjackDeckSim.h` are both pure math with NO
 game-memory dependency and ARE fully correct/tested regardless of
 whether the struct offsets are right.
 
@@ -62,8 +62,8 @@ between single- and multi-deck charts) -- a known, explicitly flagged
 gap, see `docs/JOURNAL.md` Session 3.
 
 Scope is deliberately advisor-only (read hand/deck data, show values +
-basic strategy + deterministic deck-ahead prediction + card count/
-insurance advice) -- read-only, no memory writes, no native game-state
+deterministic deck-ahead prediction + deck-derived hit/stand/double/
+split/insurance advice) -- read-only, no memory writes, no native game-state
 manipulation. "No deck prediction" was the original Session 1-3 scope;
 Session 4 added it after the user pointed out the deck offsets were
 already traced and unused -- still squarely read-only, same risk category
@@ -132,19 +132,6 @@ same header the mod itself includes:
 bin\Debug\BlackjackHandEvalTests.exe
 ```
 
-`tests/BlackjackCardCountingTests.vcxproj` does the same for
-`src/BlackjackCardCounting.h` (Hi-Lo tagging, running/true count,
-decks-remaining, the two modeled deviations). Card counting itself was
-removed from the mod in Session 7 (user directive: "remove this card
-counting crap, just have it do pure cheating") -- this header/test
-project are left on disk unused rather than deleted (no version control
-in this folder to undo a deletion with):
-
-```
-"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" tests\BlackjackCardCountingTests.vcxproj /p:Configuration=Debug /p:Platform=x64 /nologo /v:minimal
-bin\Debug\BlackjackCardCountingTests.exe
-```
-
 `tests/BlackjackDeckSimTests.vcxproj` unit-tests `src/BlackjackDeckSim.h`
 (the deterministic "pure cheat" hit/stand/double engine that replaced
 `GetBasicStrategyAction()` as the mod's actual advice source in Session
@@ -157,7 +144,7 @@ written specifically to pin down and prevent regressing):
 bin\Debug\BlackjackDeckSimTests.exe
 ```
 
-All three exit 0 and print `ALL PASS` if every case passes; nonzero with
+Both exit 0 and print `ALL PASS` if every case passes; nonzero with
 a `[FAIL]` line per failing case otherwise. Add a new case before
 changing anything in any of these headers -- PokerCheat's own hand-eval
 logic went unverified against real hands for 9 sessions previously
@@ -190,13 +177,10 @@ PokerCheat/CollectorOffline).
   still the standard multi-deck one even though Session 3 found bjack_sp
   is actually single-deck -- see that file's own header comment for the
   gap and what would need re-deriving.
-- `src/BlackjackCardCounting.h` -- self-contained Hi-Lo running/true count
-  + insurance/16-vs-10 deviations. SECONDARY as of Session 4 (superseded by
-  direct deck-ahead reading for this specific game, see its own header
-  comment) but still correct/tested. Zero game dependency, shared by the
-  mod and `tests/BlackjackCardCountingTests.cpp`. See its own header comment
-  for the single-deck-reshuffled-every-round caveat that limits how much
-  a count-based edge actually applies to this specific game.
+- `src/BlackjackDeckSim.h` -- self-contained, fully deck-derived "pure
+  cheat" hit/stand/double/split/betting engine (the mod's actual advice
+  source since Session 7). Zero game dependency, shared by the mod and
+  `tests/BlackjackDeckSimTests.cpp`.
 - `src/scriptmenu.h/.cpp`, `src/keyboard.h/.cpp` -- vendored unchanged from
   PokerCheat (itself adapted from the ScriptHookRDR2 SDK's NativeTrainer
   sample).

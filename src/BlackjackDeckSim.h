@@ -2,7 +2,7 @@
 
 // Pure, self-contained "pure cheat" decision engine for bjack_sp -- no
 // dependency on ScriptHookRDR2/game memory, same separation-of-concerns
-// rationale as BlackjackHandEval.h/BlackjackCardCounting.h (one header
+// rationale as BlackjackHandEval.h (one header
 // shared by both the mod and tests/BlackjackDeckSimTests.cpp, so a change
 // here is checked by the test suite before it ships instead of only ever
 // being eyeballed in-game -- see docs/JOURNAL.md's own note about
@@ -42,7 +42,7 @@
 // regression. This bug had gone live because the original version lived
 // directly in BlackjackCheat.cpp, reading straight from game memory, with
 // no automated test possible -- moving it to this pure header (mirroring
-// BlackjackHandEval.h/BlackjackCardCounting.h's own game-memory-free
+// BlackjackHandEval.h's own game-memory-free
 // design) is what makes it testable at all.
 //
 // Session 11 addendum -- Split is now ALSO deck-derived, via

@@ -1,4 +1,5 @@
 #include "PatternScan.h"
+#include "Log.h"
 
 #include <windows.h>
 #include <vector>
@@ -51,14 +52,20 @@ namespace PatternScan
 	std::optional<std::uintptr_t> FindInMainModule(std::string_view pattern)
 	{
 		auto base = reinterpret_cast<std::uint8_t*>(GetModuleHandle(nullptr));
+		Log::Trace("PatternScan: main module base=0x{:X}", reinterpret_cast<std::uintptr_t>(base));
 		if (!base)
 			return std::nullopt;
 
 		auto dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+		Log::Trace("PatternScan: DOS header e_magic=0x{:X} e_lfanew=0x{:X}",
+			dosHeader->e_magic, static_cast<std::uint32_t>(dosHeader->e_lfanew));
 		auto ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
 		std::size_t imageSize = ntHeaders->OptionalHeader.SizeOfImage;
+		Log::Trace("PatternScan: NT header Signature=0x{:X} SizeOfImage=0x{:X} TimeDateStamp=0x{:X}",
+			ntHeaders->Signature, imageSize, ntHeaders->FileHeader.TimeDateStamp);
 
 		ParsedPattern parsed = Parse(pattern);
+		Log::Trace("PatternScan: parsed pattern into {} byte(s)", parsed.bytes.size());
 		if (parsed.bytes.empty())
 			return std::nullopt;
 
@@ -127,7 +134,11 @@ namespace PatternScan
 			}
 
 			if (matched)
+			{
+				Log::Trace("PatternScan: match at 0x{:X} (base+0x{:X})",
+					reinterpret_cast<std::uintptr_t>(candidateStart), static_cast<std::size_t>(candidateStart - base));
 				return reinterpret_cast<std::uintptr_t>(candidateStart);
+			}
 
 			// Advance past this anchor candidate and keep scanning.
 			std::size_t advanced = static_cast<std::size_t>(candidateAnchor - searchStart) + 1;
@@ -135,6 +146,7 @@ namespace PatternScan
 			remaining -= advanced;
 		}
 
+		Log::Trace("PatternScan: scanned whole image, no match");
 		return std::nullopt;
 	}
 
@@ -142,6 +154,7 @@ namespace PatternScan
 	{
 		auto operandAddr = matchAddress + operandOffset;
 		std::int32_t displacement = *reinterpret_cast<std::int32_t*>(operandAddr);
+		Log::Trace("PatternScan::ResolveRip: operand at 0x{:X}, displacement={}", operandAddr, displacement);
 		return operandAddr + sizeof(std::int32_t) + displacement;
 	}
 }

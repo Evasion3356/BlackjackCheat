@@ -26,10 +26,12 @@ namespace
 		static const std::wstring path = []() -> std::wstring
 		{
 			HMODULE hModule = nullptr;
-			GetModuleHandleExA(
+			[[maybe_unused]] BOOL gotModule = GetModuleHandleExA(
 				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 				reinterpret_cast<LPCSTR>(&ResolveIniPath),
 				&hModule);
+			Log::Trace("Config::ResolveIniPath: GetModuleHandleExA ok={} hModule=0x{:X}",
+				gotModule != FALSE, reinterpret_cast<std::uintptr_t>(hModule));
 
 			wchar_t modulePath[MAX_PATH] = {};
 			GetModuleFileNameW(hModule, modulePath, MAX_PATH);
@@ -69,11 +71,18 @@ namespace
 
 	void ReloadImpl()
 	{
+		Log::Trace(L"Config: ini path={}", ResolveIniPath());
+
 		inipp::Ini<char> ini;
 		{
+			Log::Trace("Config: opening ini for read");
 			std::ifstream is(ResolveIniPath());
+			Log::Trace("Config: ini open for read {}", is ? "succeeded" : "failed (using defaults)");
 			if (is)
+			{
 				ini.parse(is);
+				Log::Trace("Config: ini parsed, {} section(s), {} parse error(s)", ini.sections.size(), ini.errors.size());
+			}
 		}
 
 		Config::Values defaults;
@@ -153,7 +162,9 @@ namespace
 #endif
 
 		{
+			Log::Trace("Config: opening ini for write");
 			std::ofstream os(ResolveIniPath(), std::ios::trunc);
+			Log::Trace("Config: ini open for write {}", os ? "succeeded" : "failed");
 			if (os)
 				ini.generate(os);
 			else

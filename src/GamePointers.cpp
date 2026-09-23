@@ -25,6 +25,7 @@ namespace GamePointers
 	{
 		static rage::atArray<rage::scrThread*>* cached = []() -> rage::atArray<rage::scrThread*>*
 		{
+			Log::Trace("GamePointers::GetScriptThreads: first call, scanning for \"{}\"", kScriptThreadsPattern);
 			auto match = PatternScan::FindInMainModule(kScriptThreadsPattern);
 			if (!match)
 			{

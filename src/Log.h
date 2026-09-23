@@ -60,6 +60,18 @@
 	ResolveIniPath() (wide path, deliberately does no narrow/wide
 	conversion of its own -- see that file's header comment) can log a
 	std::wstring directly without ever touching a conversion themselves.
+
+	Log::Trace is a Debug-only step tracer for the injection phase
+	(DllMain attach/detach, Config load, the scrThread-pool AOB scan,
+	ScriptMain startup) -- added after a user report of a load-screen crash
+	with no BlackjackCheat.log at all, i.e. somewhere before the first
+	Log::Write ever ran. Each line goes to OutputDebugStringA (tagged
+	"[BlackjackCheat]", viewable with Sysinternals DebugView) BEFORE the
+	file sink, so the last step reached is still visible even when opening
+	the log file itself is the thing that dies. Release compiles every
+	call to an empty inline body (format strings are still compile-time
+	checked) -- keep Trace arguments free of side effects, since the
+	argument expressions themselves are still evaluated there.
 */
 
 #pragma once
@@ -72,6 +84,12 @@
 
 #include <memory>
 #include <utility>
+
+#ifdef _DEBUG
+#include <windows.h>
+#include <format>
+#include <string>
+#endif
 
 namespace Log
 {
@@ -105,5 +123,33 @@ namespace Log
 	void Write(spdlog::wformat_string_t<Args...> fmt, Args&&... args)
 	{
 		detail::GetLogger()->info(fmt, std::forward<Args>(args)...);
+	}
+
+	template <typename... Args>
+	void Trace(spdlog::format_string_t<Args...> fmt, Args&&... args)
+	{
+#ifdef _DEBUG
+		std::string line = std::format(fmt, std::forward<Args>(args)...);
+		std::string debugLine = "[BlackjackCheat] TRACE " + line + "\n";
+		OutputDebugStringA(debugLine.c_str());
+		detail::GetLogger()->info("TRACE {}", line);
+#else
+		(void)fmt;
+		((void)args, ...);
+#endif
+	}
+
+	template <typename... Args>
+	void Trace(spdlog::wformat_string_t<Args...> fmt, Args&&... args)
+	{
+#ifdef _DEBUG
+		std::wstring line = std::format(fmt, std::forward<Args>(args)...);
+		std::wstring debugLine = L"[BlackjackCheat] TRACE " + line + L"\n";
+		OutputDebugStringW(debugLine.c_str());
+		detail::GetLogger()->info(L"TRACE {}", line);
+#else
+		(void)fmt;
+		((void)args, ...);
+#endif
 	}
 }

@@ -1713,3 +1713,25 @@ decoding to the expected corrected strings (spot-checked
 `STEHEN`/`ХВАТИТ` present in the actual table rows, `HALTEN`/`СТОП`
 only remaining in the explanatory comments documenting what was wrong
 before). Not yet re-tested live in-game.
+
+## Session 17 -- Debug-only injection tracing, card counting leftovers deleted
+
+**Injection tracing.** A user bug report claimed a 100% load-screen crash
+(ntdll access violation, no `BlackjackCheat.log` ever created) on a
+non-standard setup (a third-party "ScriptHookRDR2 V2" in place of
+Alexander Blade's, plus LML). No log at all means the crash, if it's ours,
+happens before `Config::Reload()`'s first `Log::Write` in `DllMain`. Added
+`Log::Trace` (Debug-only, empty in Release) and traced every injection
+step: `DllMain` attach/detach context (load type, pid/tid, asi/exe paths,
+working dir, whether ScriptHookRDR2.dll is loaded), each call in
+`DllMain`, `Config`'s ini path/open/parse/write, the scrThread-pool AOB
+scan (PE headers, match or no-match, RIP resolve), and `ScriptMain`
+startup through the first tick. Each line also goes to
+`OutputDebugStringA` before the file, so DebugView still shows the last
+step reached if opening the log file is what crashes. Not yet run in-game.
+
+**Card counting deleted.** `src/BlackjackCardCounting.h` and
+`tests/BlackjackCardCountingTests.*` had been unused since Session 7, left
+on disk only because the folder had no version control at the time. It
+does now, so they are deleted (plus the stale `ClInclude` in
+`BlackjackCheat.vcxproj`), recoverable from git history.
