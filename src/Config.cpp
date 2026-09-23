@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "Log.h"
+#include "LogFallback.h"
 
 #include "..\external\inipp\inipp\inipp.h"
 
@@ -16,33 +17,15 @@ namespace
 	Config::Values g_values;
 	bool g_loaded = false;
 
-	// Same technique as PokerCheat's Config.cpp: resolves BlackjackCheat.ini
-	// next to this DLL's own .asi via the DLL's own module handle, wide
-	// path throughout so there's no narrow/wide conversion anywhere in this
-	// file (see PokerCheat's Config.h header comment for why that mattered
-	// there -- a real crash source with the mINI library it replaced).
-	const std::wstring& ResolveIniPath()
+	// Where BlackjackCheat.ini is loaded from and saved to: next to the .asi, or
+	// %LOCALAPPDATA%\RDR2ASIMods\BlackjackCheat.ini when the game folder isn't
+	// writable -- starting from the game folder's copy if there is one (see
+	// LogFallback::ResolveSettings). Resolved once per session.
+	const LogFallback::SettingsPaths& IniPaths()
 	{
-		static const std::wstring path = []() -> std::wstring
-		{
-			HMODULE hModule = nullptr;
-			[[maybe_unused]] BOOL gotModule = GetModuleHandleExA(
-				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-				reinterpret_cast<LPCSTR>(&ResolveIniPath),
-				&hModule);
-			Log::Trace("Config::ResolveIniPath: GetModuleHandleExA ok={} hModule=0x{:X}",
-				gotModule != FALSE, reinterpret_cast<std::uintptr_t>(hModule));
-
-			wchar_t modulePath[MAX_PATH] = {};
-			GetModuleFileNameW(hModule, modulePath, MAX_PATH);
-
-			wchar_t drive[_MAX_DRIVE], dir[_MAX_DIR];
-			_wsplitpath_s(modulePath, drive, _MAX_DRIVE, dir, _MAX_DIR, nullptr, 0, nullptr, 0);
-
-			return std::wstring(drive) + dir + L"BlackjackCheat.ini";
-		}();
-
-		return path;
+		static const LogFallback::SettingsPaths paths = LogFallback::ResolveSettings(
+			LogFallback::ModuleDirectory(), L"BlackjackCheat.ini", LogFallback::FallbackDirectory());
+		return paths;
 	}
 
 	template <typename T>
@@ -71,12 +54,12 @@ namespace
 
 	void ReloadImpl()
 	{
-		Log::Trace(L"Config: ini path={}", ResolveIniPath());
+		Log::Trace(L"Config: ini path={}", IniPaths().read);
 
 		inipp::Ini<char> ini;
 		{
 			Log::Trace("Config: opening ini for read");
-			std::ifstream is(ResolveIniPath());
+			std::ifstream is(IniPaths().read);
 			Log::Trace("Config: ini open for read {}", is ? "succeeded" : "failed (using defaults)");
 			if (is)
 			{
@@ -161,18 +144,22 @@ namespace
 		SetFloat(hud, "MyHandIconHeight", g_values.MyHandIconHeight);
 #endif
 
+		if (IniPaths().usedFallback)
+			Log::Write("Config::Reload -- the game folder isn't writable, so settings are saved to {}",
+				LogFallback::ToUtf8(IniPaths().write));
+
 		{
 			Log::Trace("Config: opening ini for write");
-			std::ofstream os(ResolveIniPath(), std::ios::trunc);
+			std::ofstream os(IniPaths().write, std::ios::trunc);
 			Log::Trace("Config: ini open for write {}", os ? "succeeded" : "failed");
 			if (os)
 				ini.generate(os);
 			else
-				Log::Write(L"Config::Reload -- failed to open {} for writing", ResolveIniPath());
+				Log::Write(L"Config::Reload -- failed to open {} for writing", IniPaths().write);
 		}
 
 		Log::Write(L"Config::Reload -- loaded from {} (ShowDealerHand={} ShowBettingAdvice={} ShowAdvice={} ShowDeckPrediction={} ShowCardsBeforeBet={})",
-			ResolveIniPath(), g_values.ShowDealerHand, g_values.ShowBettingAdvice, g_values.ShowAdvice, g_values.ShowDeckPrediction, g_values.ShowCardsBeforeBet);
+			IniPaths().read, g_values.ShowDealerHand, g_values.ShowBettingAdvice, g_values.ShowAdvice, g_values.ShowDeckPrediction, g_values.ShowCardsBeforeBet);
 	}
 }
 
