@@ -77,13 +77,11 @@ BOOL APIENTRY DllMain(HMODULE hInstance, DWORD reason, LPVOID lpReserved)
 		Log::Trace("DllMain: scriptRegister begin");
 		scriptRegister(hInstance, ScriptMain);
 		Log::Trace("DllMain: scriptRegister done");
-#ifdef _DEBUG
-		// Release has no menu to drive with keystrokes at all (see
-		// script.cpp) -- Debug-only, same as PokerCheat.
+		// Both builds: Debug's F11 menu and the bet hotkeys (Right/Left/Tab,
+		// see BlackjackCheat.cpp's UpdateBetHotkeys()).
 		Log::Trace("DllMain: keyboardHandlerRegister begin");
 		keyboardHandlerRegister(OnKeyboardMessage);
 		Log::Trace("DllMain: keyboardHandlerRegister done");
-#endif
 		Log::Trace("DllMain: DLL_PROCESS_ATTACH complete");
 		break;
 	case DLL_PROCESS_DETACH:
@@ -93,11 +91,9 @@ BOOL APIENTRY DllMain(HMODULE hInstance, DWORD reason, LPVOID lpReserved)
 		Log::Trace("DllMain: scriptUnregister begin");
 		scriptUnregister(hInstance);
 		Log::Trace("DllMain: scriptUnregister done");
-#ifdef _DEBUG
 		Log::Trace("DllMain: keyboardHandlerUnregister begin");
 		keyboardHandlerUnregister(OnKeyboardMessage);
 		Log::Trace("DllMain: keyboardHandlerUnregister done");
-#endif
 		Log::Trace("DllMain: DLL_PROCESS_DETACH complete");
 		break;
 	}

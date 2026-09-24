@@ -83,6 +83,7 @@ namespace
 			loaded.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
 			loaded.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
 			loaded.ShowCardsBeforeBet = GetOr(general, "ShowCardsBeforeBet", defaults.ShowCardsBeforeBet);
+			loaded.BetHotkeys = GetOr(general, "BetHotkeys", defaults.BetHotkeys);
 			loaded.Language = GetOr(general, "Language", defaults.Language);
 
 #ifdef _DEBUG
@@ -137,6 +138,7 @@ namespace
 		SetBool(general, "ShowAdvice", g_values.ShowAdvice);
 		SetBool(general, "ShowDeckPrediction", g_values.ShowDeckPrediction);
 		SetBool(general, "ShowCardsBeforeBet", g_values.ShowCardsBeforeBet);
+		SetBool(general, "BetHotkeys", g_values.BetHotkeys);
 		general["Language"] = g_values.Language;
 
 #ifdef _DEBUG

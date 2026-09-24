@@ -65,6 +65,18 @@ public:
 		return static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(raw));
 	}
 
+	// The project's one memory write (the bet hotkeys' Tab = bet max, see
+	// BlackjackCheat.cpp's UpdateBetHotkeys()). Writes the low 4 bytes,
+	// where AsInt32() reads. Returns false if the slot is out of range.
+	bool SetInt32(std::int32_t value) const
+	{
+		void* address = GamePointers::GetScriptLocalAddress(m_Thread, m_Index);
+		if (!address)
+			return false;
+		*static_cast<std::int32_t*>(address) = value;
+		return true;
+	}
+
 	// Same slot, bit-reinterpreted as IEEE-754 (for a `float` local).
 	float AsFloat() const
 	{

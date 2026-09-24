@@ -849,12 +849,16 @@
 #include "Config.h"
 #include "Localization.h"
 #include "script.h"
+#include "keyboard.h"
 
+#include <algorithm>
 #include <array>
+#include <initializer_list>
 #include <filesystem>
 #include <fstream>
 #include <vector>
 #include <charconv>
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <sstream>
@@ -1036,6 +1040,33 @@ namespace BlackjackCheat
 	static_assert(LiveTableLocal(nullptr).At(kTableRoundPhaseField).Index() == 1472);
 	static_assert(HandCardLocal(SeatHandLocal(SeatLocal(DisplayedTableLocal(nullptr), 2), 0), 0).Index() == 189); // presentation copy, seat 2 hand 0 card 0 (LocateTableCopies)
 	static_assert(HandCardLocal(SeatHandLocal(SeatLocal(RootLocal(nullptr).At(kIncomingTableField), 2), 0), 0).Index() == 458);
+
+	// The bet/insurance input UI (uLocal_14.f_3218.f_253). Static trace
+	// only: func_225's betting state passes &uLocal_14.f_3218 to func_472
+	// ("is the bet UI up": `return f_253`), func_473 (opens it) and
+	// func_474 (runs it every frame). func_474 moves f_253.f_3 by
+	// `steps * f_10.f_4` (one table minimum per step) and clamps it with
+	// func_948: [min(bankroll, f_10.f_4), min(bankroll, f_10.f_5)], both
+	// rounded down to a multiple of f_10.f_4; for insurance (f_253.f_1)
+	// it's [min(bankroll, 1), min(bankroll, bet / 2)] with no rounding.
+	// Steps come from INPUT_MINIGAME_INCREASE/DECREASE_BET, else the
+	// CHANGE_BET_AXIS_Y axis, through func_724's hold-to-repeat struct at
+	// f_253.f_4: a press gives one step at once, holding starts at 7
+	// steps/s and speeds up x1.08 per step to 200/s (12/s for an axis held
+	// under 0.75). Those five floats are the script's static initial
+	// values of uLocal_3489..3493 (7, 12, 200, 1.08, 0.75), which pins
+	// the slot below. The bet hotkeys (UpdateBetHotkeys()) write f_3, the
+	// mod's only memory write, and copy that repeat curve for Right/Left.
+	constexpr std::uint32_t kHudField = 3218;           // uLocal_14.f_3218
+	constexpr std::uint32_t kBetInputField = 253;       // f_3218.f_253 -- 1 while the bet/insurance UI is up
+	constexpr std::uint32_t kBetInputInsuranceField = 1; // f_253.f_1 -- 1 = insurance stake, 0 = the round's bet
+	constexpr std::uint32_t kBetInputSeatField = 2;     // f_253.f_2 -- the seat betting (f_9)
+	constexpr std::uint32_t kBetInputAmountField = 3;   // f_253.f_3 -- the amount shown, in cents
+	constexpr std::uint32_t kBetInputRepeatField = 4;   // f_253.f_4 -- func_724's hold-to-repeat struct
+
+	constexpr ScriptLocal BetInputLocal(rage::scrThread* thread) { return RootLocal(thread).At(kHudField).At(kBetInputField); }
+
+	static_assert(BetInputLocal(nullptr).At(kBetInputRepeatField).Index() == 3489); // `uLocal_3489 = 1088421888` (7f), static trace
 
 	namespace
 	{
@@ -2604,7 +2635,7 @@ namespace BlackjackCheat
 		// same process NextCardIconBaseX/HoleCardIconX already went
 		// through (see Config.h's MyHandIconX/Y for the Debug-tunable
 		// equivalent).
-		constexpr float kReleaseMyHandIconX = 0.14f;
+		constexpr float kReleaseMyHandIconX = 0.145f;
 		constexpr float kReleaseMyHandIconY = 0.925f;
 		constexpr float kReleaseMyHandIconSpacingX = 0.02f;
 		constexpr float kReleaseMyHandIconWidth = 0.02f;
@@ -3205,10 +3236,236 @@ namespace BlackjackCheat
 		}
 	}
 
+	// Bet hotkeys: Right/Left arrow move the bet 5 steps (5x what one press
+	// of the game's own Up/Down does -- a step is the table minimum), Tab
+	// jumps to the most the game allows (table max or bankroll, see
+	// BetInputLocal()'s comment). Not shown for the insurance stake. Keys
+	// are read raw (keyboard.h). All three write f_253.f_3 directly -- the
+	// mod's only memory write, at the user's request: pressing the game's
+	// own controls for it (SET_CONTROL_VALUE_NEXT_FRAME, which worked on
+	// control groups 0+2) is capped by func_724 at 200 steps/s, ~3 s to max
+	// at a 2/500 table. Every value written is clamped to func_948's own
+	// range, computed from the same table copy func_474 uses, so it's one
+	// the game could have reached itself; func_474 redraws the label from
+	// f_3 every frame and places the bet from it. All three confirmed live
+	// (a $5 max bet paid $5 on a win).
+	//
+	// Prompts: two of ours next to the game's own Place Bet / Alter Bet
+	// (same priority, no group, like func_839's): Left/Right labelled with
+	// the amount they move (no words, so nothing to translate), and BET MAX
+	// (Tab). Merging Left/Right into one Alter Bet prompt doesn't work
+	// (live): a prompt only lights its FIRST TWO control actions correctly
+	// when pressed, whatever they are; actions added to the game's prompt
+	// after _UI_PROMPT_REGISTER_END never show; INPUT_FRONTEND_SCROLL_AXIS_X
+	// (the only left/right axis on the arrows) isn't in the MinigameBlackjack
+	// context and hides the whole prompt; and a prompt re-registered while
+	// the bet UI is already up never shows.
+	namespace
+	{
+		// Icons only -- the keys themselves are read as VK codes. Controls in
+		// the MinigameBlackjack input context whose default PC binding is
+		// that key (RedM-AI-Knowledge-Brain's Controls table): Arrow
+		// Left/Right, and Tab, which is Split -- not read while the bet UI is
+		// up. All three confirmed live.
+		constexpr Hash kBetDownPromptControl = rage::Joaat("INPUT_GAME_MENU_LEFT");
+		constexpr Hash kBetUpPromptControl = rage::Joaat("INPUT_GAME_MENU_RIGHT");
+		constexpr Hash kBetMaxPromptControl = rage::Joaat("INPUT_MINIGAME_BLACKJACK_SPLIT");
+		static_assert(kBetUpPromptControl == 0x65F9EC5B && kBetDownPromptControl == 0xAD7FCC5B && kBetMaxPromptControl == 0x432B111F);
+
+		// The prompt list is sorted by input type, not registration order or
+		// priority (live: -/+ on GAME_MENU_LEFT/RIGHT sorted up by Camera,
+		// BET MAX on SPLIT just above the game's Amount). -/+ borrows the
+		// Amount prompt's input type so it sorts next to it, below BET MAX.
+		// saloon1 calls this native the same way, after registering.
+		constexpr Hash kAlterBetInput = rage::Joaat("INPUT_MINIGAME_CHANGE_BET_AXIS_Y");
+		static_assert(kAlterBetInput == 0xBDC733EE);
+
+		constexpr std::int32_t kBetHotkeySteps = 5;
+		constexpr int kPromptPriority = 3;          // the bet prompts' own (func_474 -> func_352 iParam10)
+
+		struct BetHotkeyState
+		{
+			Prompt step = 0;
+			Prompt max = 0;
+			std::int32_t labelledStep = -1;
+
+			// Right/Left hold-to-repeat, func_724's state (see BetRepeat).
+			int heldDirection = 0;  // +1 Right, -1 Left, 0 neither
+			float accumulated = 0.0f;
+			float rate = 0.0f;      // steps per second
+		};
+		BetHotkeyState g_betHotkeys;
+
+		Prompt RegisterBetPrompt(std::initializer_list<Hash> controls, std::string_view text)
+		{
+			const std::string label(text);
+			Prompt prompt = HUD::_UI_PROMPT_REGISTER_BEGIN();
+			for (Hash control : controls)
+				HUD::_UI_PROMPT_SET_CONTROL_ACTION(prompt, control);
+			HUD::_UI_PROMPT_SET_TEXT(prompt, MISC::VAR_STRING(10, "LITERAL_STRING", label.c_str()));
+			HUD::_UI_PROMPT_SET_PRIORITY(prompt, kPromptPriority);
+			HUD::_UI_PROMPT_SET_ATTRIBUTE(prompt, 18, true); // func_839 sets it on every prompt it makes
+			HUD::_UI_PROMPT_SET_STANDARD_MODE(prompt, false);
+			HUD::_UI_PROMPT_REGISTER_END(prompt);
+			return prompt;
+		}
+
+		void ResetBetHotkeys()
+		{
+			for (Prompt prompt : { g_betHotkeys.step, g_betHotkeys.max })
+				if (prompt != 0 && HUD::_UI_PROMPT_IS_VALID(prompt))
+					HUD::_UI_PROMPT_DELETE(prompt);
+			g_betHotkeys = BetHotkeyState{};
+		}
+
+		// func_724's hold-to-repeat, with the game's own values for the bet
+		// UI (the static initial values of f_253.f_4, uLocal_3489..3493): a
+		// press moves one step at once, holding repeats at 7 steps/s and
+		// speeds up x1.08 per repeat, capped at 200/s. Here a step is the
+		// 5x jump. (The 12/s cap for a half-pushed analog stick doesn't
+		// apply to keys.)
+		constexpr float kRepeatStartRate = 7.0f;
+		constexpr float kRepeatMaxRate = 200.0f;
+		constexpr float kRepeatRateGrowth = 1.08f;
+
+		// Steps to move this frame for the held direction (+1/-1/0).
+		std::int32_t BetRepeat(int direction)
+		{
+			BetHotkeyState& state = g_betHotkeys;
+			if (direction != state.heldDirection)
+			{
+				state.heldDirection = direction;
+				state.accumulated = 0.0f;
+				state.rate = kRepeatStartRate;
+				return direction;
+			}
+			if (direction == 0)
+				return 0;
+
+			state.accumulated += MISC::GET_FRAME_TIME() * state.rate;
+			if (state.accumulated < 1.0f)
+				return 0;
+
+			const std::int32_t steps = static_cast<std::int32_t>(std::lround(state.accumulated));
+			state.accumulated = 0.0f;
+			state.rate = (std::min)(state.rate * kRepeatRateGrowth, kRepeatMaxRate);
+			return direction * steps;
+		}
+
+		struct BetRange
+		{
+			std::int32_t min = 0;
+			std::int32_t max = -1;
+		};
+
+		// func_948's range for the open bet UI, in cents. Reads the
+		// presentation table (f_17): func_225 hands func_474 that copy, not
+		// the live one, so this matches the game's own clamp exactly.
+		BetRange BetInputRange(rage::scrThread* thread, std::int32_t minBet, std::int32_t maxBet)
+		{
+			const ScriptLocal betInput = BetInputLocal(thread);
+			const std::int32_t seat = betInput.At(kBetInputSeatField).AsInt32();
+			if (seat < 0 || seat >= static_cast<std::int32_t>(kSeatCount))
+				return {};
+
+			const ScriptLocal seatBase = SeatLocal(DisplayedTableLocal(thread), static_cast<std::uint32_t>(seat));
+			const std::int32_t bankroll = seatBase.At(kSeatBankrollField).AsInt32();
+			if (betInput.At(kBetInputInsuranceField).AsInt32() != 0)
+				return { (std::min)(bankroll, 1), (std::min)(bankroll, SeatBetLocal(seatBase, 0).AsInt32() / 2) };
+
+			const std::int32_t bottom = (std::min)(bankroll, minBet);
+			const std::int32_t top = (std::min)(bankroll, maxBet);
+			return { bottom - bottom % minBet, top - top % minBet };
+		}
+
+		// Writes a new amount, clamped like func_725, with func_726's sound.
+		void SetBetAmount(const ScriptLocal& amountLocal, const BetRange& range, std::int32_t wanted, std::string_view key)
+		{
+			const std::int32_t amount = amountLocal.AsInt32();
+			const std::int32_t clamped = (std::max)(range.min, (std::min)(wanted, range.max));
+			if (range.max < range.min || clamped == amount)
+				return;
+
+			const bool written = amountLocal.SetInt32(clamped);
+			AUDIO::_STOP_SOUND_WITH_NAME("BET_AMOUNT", "HUD_POKER");
+			AUDIO::PLAY_SOUND_FRONTEND((clamped == range.min || clamped == range.max) ? "BET_MIN_MAX" : "BET_AMOUNT", "HUD_POKER", true, 0);
+			Log::Write("BetHotkeys: {} set the amount {} -> {} (range {}..{}){}", key, amount, clamped, range.min, range.max, written ? "" : " (write FAILED)");
+		}
+
+		void UpdateBetHotkeys(rage::scrThread* thread)
+		{
+			// The round's bet only: the same UI also asks for the insurance
+			// stake (f_1 = 1), where the hotkeys aren't wanted (user request).
+			if (!thread || BetInputLocal(thread).AsInt32() == 0 || BetInputLocal(thread).At(kBetInputInsuranceField).AsInt32() != 0)
+			{
+				if (g_betHotkeys.step != 0 || g_betHotkeys.max != 0)
+					ResetBetHotkeys();
+				return;
+			}
+
+			const ScriptLocal betInput = BetInputLocal(thread);
+			const std::int32_t minBet = BetLimitsLocal(thread).At(kMinBetField).AsInt32();
+			const std::int32_t maxBet = BetLimitsLocal(thread).At(kMaxBetField).AsInt32();
+			if (minBet <= 0 || maxBet < minBet)
+				return;
+
+			// Registered once, on the bet UI's first frame -- prompts
+			// registered later never showed (see above), so the label is
+			// fixed then too (the table's limits can't change mid-bet).
+			const std::int32_t step = minBet * kBetHotkeySteps;
+			if (g_betHotkeys.step == 0)
+			{
+				std::string label("-/+");
+				AppendDollars(label, step);
+				g_betHotkeys.max = RegisterBetPrompt({ kBetMaxPromptControl }, Localization::BetSizeLabel(BlackjackDeckSim::BetSize::Max));
+				g_betHotkeys.step = RegisterBetPrompt({ kBetDownPromptControl, kBetUpPromptControl }, label);
+				HUD::_UI_PROMPT_SET_ORDERING_AS_INPUT_TYPE(g_betHotkeys.step, kAlterBetInput);
+			}
+
+			// Right wins if both are held, like func_474's INCREASE-first
+			// else-if. IsKeyDown stays true while Windows keeps sending
+			// auto-repeat keydowns.
+			const bool rightHeld = IsKeyDown(VK_RIGHT);
+			const bool leftHeld = IsKeyDown(VK_LEFT);
+			const std::int32_t steps = BetRepeat(rightHeld ? 1 : leftHeld ? -1 : 0);
+			// A Tab released with Alt held (Alt+Tab, or Tab during LALT's
+			// free-look camera) isn't BET MAX. Uses the Alt flag Windows puts
+			// on the Tab event itself: checking Alt's own key state ignored
+			// every Tab (live), since Alt's release can be lost when Alt+Tab
+			// takes focus away. Consumed either way.
+			bool tab = false;
+			if (IsKeyJustUp(VK_TAB, false))
+			{
+				tab = !IsKeyWithAlt(VK_TAB);
+				ResetKeyState(VK_TAB);
+				if (!tab)
+					Log::Write("BetHotkeys: ignored Tab released with Alt held");
+			}
+			if (steps == 0 && !tab)
+				return;
+
+			const ScriptLocal amountLocal = betInput.At(kBetInputAmountField);
+			const BetRange range = BetInputRange(thread, minBet, maxBet);
+			const std::int32_t amount = amountLocal.AsInt32();
+			if (tab)
+				SetBetAmount(amountLocal, range, range.max, "Tab");
+			else
+				SetBetAmount(amountLocal, range, amount + steps * step, steps > 0 ? "Right" : "Left");
+		}
+	}
+
 	void OnTick()
 	{
 		if (!Enabled)
+		{
+			ResetBetHotkeys();
 			return;
+		}
+
+		if (Config::Get().BetHotkeys)
+			UpdateBetHotkeys(GamePointers::FindScriptThread(rage::Joaat("bjack_sp")));
+		else
+			ResetBetHotkeys();
 
 		DrawOverlay();
 	}

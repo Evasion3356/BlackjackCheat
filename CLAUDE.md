@@ -72,7 +72,11 @@ gap, see `docs/JOURNAL.md` Session 3.
 Scope is deliberately advisor-only (read hand/deck data, show values +
 deterministic deck-ahead prediction + deck-derived hit/stand/double/
 split/insurance advice) -- read-only, no memory writes, no native game-state
-manipulation. "No deck prediction" was the original Session 1-3 scope;
+manipulation. The one exception is the bet hotkeys (`UpdateBetHotkeys()`): Right/Left arrow (5
+bet steps) and Tab (bet max) write the bet amount (`uLocal_14.f_3218.f_253.f_3`)
+straight to a value inside the game's own clamp -- the project's ONLY memory
+write, added at the user's request because pressing the game's own bet controls
+is capped at 200 steps/s. "No deck prediction" was the original Session 1-3 scope;
 Session 4 added it after the user pointed out the deck offsets were
 already traced and unused -- still squarely read-only, same risk category
 as PokerCheat's own predicted board. Read `docs/JOURNAL.md` for the full
@@ -348,3 +352,7 @@ untested live, all with the Debug build and the round log running:
    `tableMinBet`/`tableMaxBet`) read 2/500 at the one table tested so far
    and every advised amount paid out as predicted. Still unseen: a table
    with different stakes, and a round where only a split wins.
+7. Bet hotkeys: all three keys confirmed live (a $5 max bet paid $5). Prompt
+   layout: the game's own Alter Bet (Up/Down) + our "-/+$0.10" (Left/Right) +
+   BET MAX (Tab) -- a prompt only highlights its first two actions, so the
+   arrows can't share one prompt (see `UpdateBetHotkeys()`'s comment).
