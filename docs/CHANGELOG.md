@@ -5,7 +5,7 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
-## [Unreleased]
+## [1.5.0] - 2026-09-24
 
 ### Changed
 - Betting advice is now BET MAX or BET MIN with the amount to bet and
