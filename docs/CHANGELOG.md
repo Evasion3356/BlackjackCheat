@@ -5,6 +5,33 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [Unreleased]
+
+### Fixed
+- Advice now only appears while it's actually your turn. Before, it showed
+  while a seat before yours was still playing (assuming the next card was
+  yours when that seat was about to take it), and it kept showing for a
+  hand you had already stood on.
+- Double and Split advice now check your real bet against your bankroll.
+  The bet was being read from the wrong memory slot, so the check never
+  blocked anything. Not yet confirmed in-game.
+- Insurance advice now only shows while insurance can still be taken,
+  not for the whole round.
+- Pre-deal betting advice no longer uses the deck to play out your hand
+  when a seat before yours will draw first (those draws change your
+  cards); it falls back to the rough estimate instead.
+- Better advice when another seat still has to act: the mod now uses
+  every card you'll draw, not just the next one (e.g. soft 16 with a 6
+  then a 5 coming is now Hit, since it reaches 21).
+- Split advice now counts a doubled hand as two bets, so it no longer
+  passes up splits that win by doubling.
+- Basic-strategy fixes: soft 18 against a dealer 3-6 now says Stand when
+  you can't double (it said Hit), and an A,A you can't split now says Hit
+  (it could say Double).
+- Reloading the settings no longer deletes the INI's `[HUD]` section in
+  the Release build, and no longer rewrites the file (losing your
+  comments) when nothing in it needs changing.
+
 ## [1.4.0] - 2026-09-23
 
 ### Fixed

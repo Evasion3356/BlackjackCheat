@@ -57,62 +57,81 @@ namespace
 		Log::Trace(L"Config: ini path={}", IniPaths().read);
 
 		inipp::Ini<char> ini;
+		bool fileRead = false;
 		{
 			Log::Trace("Config: opening ini for read");
 			std::ifstream is(IniPaths().read);
 			Log::Trace("Config: ini open for read {}", is ? "succeeded" : "failed (using defaults)");
 			if (is)
 			{
+				fileRead = true;
 				ini.parse(is);
 				Log::Trace("Config: ini parsed, {} section(s), {} parse error(s)", ini.sections.size(), ini.errors.size());
 			}
 		}
 
+		// Parsed into a local copy and only committed once every value
+		// has been read, so an exception partway through (caught by
+		// Reload()) really does keep the previous values intact, as its
+		// log line says, instead of leaving them half-updated.
 		Config::Values defaults;
+		Config::Values loaded;
 		{
 			auto& general = ini.sections["General"];
-			g_values.ShowDealerHand = GetOr(general, "ShowDealerHand", defaults.ShowDealerHand);
-			g_values.ShowBettingAdvice = GetOr(general, "ShowBettingAdvice", defaults.ShowBettingAdvice);
-			g_values.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
-			g_values.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
-			g_values.ShowCardsBeforeBet = GetOr(general, "ShowCardsBeforeBet", defaults.ShowCardsBeforeBet);
-			g_values.Language = GetOr(general, "Language", defaults.Language);
+			loaded.ShowDealerHand = GetOr(general, "ShowDealerHand", defaults.ShowDealerHand);
+			loaded.ShowBettingAdvice = GetOr(general, "ShowBettingAdvice", defaults.ShowBettingAdvice);
+			loaded.ShowAdvice = GetOr(general, "ShowAdvice", defaults.ShowAdvice);
+			loaded.ShowDeckPrediction = GetOr(general, "ShowDeckPrediction", defaults.ShowDeckPrediction);
+			loaded.ShowCardsBeforeBet = GetOr(general, "ShowCardsBeforeBet", defaults.ShowCardsBeforeBet);
+			loaded.Language = GetOr(general, "Language", defaults.Language);
 
 #ifdef _DEBUG
 			auto& hud = ini.sections["HUD"];
-			g_values.PanelX = GetOr(hud, "PanelX", defaults.PanelX);
-			g_values.PanelY = GetOr(hud, "PanelY", defaults.PanelY);
-			g_values.TextScale = GetOr(hud, "TextScale", defaults.TextScale);
-			g_values.TitleTextScale = GetOr(hud, "TitleTextScale", defaults.TitleTextScale);
-			g_values.AdviceX = GetOr(hud, "AdviceX", defaults.AdviceX);
-			g_values.AdviceY = GetOr(hud, "AdviceY", defaults.AdviceY);
-			g_values.HoleCardIconX = GetOr(hud, "HoleCardIconX", defaults.HoleCardIconX);
-			g_values.HoleCardIconY = GetOr(hud, "HoleCardIconY", defaults.HoleCardIconY);
-			g_values.HoleCardIconWidth = GetOr(hud, "HoleCardIconWidth", defaults.HoleCardIconWidth);
-			g_values.HoleCardIconHeight = GetOr(hud, "HoleCardIconHeight", defaults.HoleCardIconHeight);
-			g_values.NextCardIconBaseX = GetOr(hud, "NextCardIconBaseX", defaults.NextCardIconBaseX);
-			g_values.NextCardIconY = GetOr(hud, "NextCardIconY", defaults.NextCardIconY);
-			g_values.NextCardIconSpacingX = GetOr(hud, "NextCardIconSpacingX", defaults.NextCardIconSpacingX);
-			g_values.NextCardIconWidth = GetOr(hud, "NextCardIconWidth", defaults.NextCardIconWidth);
-			g_values.NextCardIconHeight = GetOr(hud, "NextCardIconHeight", defaults.NextCardIconHeight);
-			g_values.MyHandIconX = GetOr(hud, "MyHandIconX", defaults.MyHandIconX);
-			g_values.MyHandIconY = GetOr(hud, "MyHandIconY", defaults.MyHandIconY);
-			g_values.MyHandIconSpacingX = GetOr(hud, "MyHandIconSpacingX", defaults.MyHandIconSpacingX);
-			g_values.MyHandIconWidth = GetOr(hud, "MyHandIconWidth", defaults.MyHandIconWidth);
-			g_values.MyHandIconHeight = GetOr(hud, "MyHandIconHeight", defaults.MyHandIconHeight);
+			loaded.PanelX = GetOr(hud, "PanelX", defaults.PanelX);
+			loaded.PanelY = GetOr(hud, "PanelY", defaults.PanelY);
+			loaded.TextScale = GetOr(hud, "TextScale", defaults.TextScale);
+			loaded.TitleTextScale = GetOr(hud, "TitleTextScale", defaults.TitleTextScale);
+			loaded.AdviceX = GetOr(hud, "AdviceX", defaults.AdviceX);
+			loaded.AdviceY = GetOr(hud, "AdviceY", defaults.AdviceY);
+			loaded.HoleCardIconX = GetOr(hud, "HoleCardIconX", defaults.HoleCardIconX);
+			loaded.HoleCardIconY = GetOr(hud, "HoleCardIconY", defaults.HoleCardIconY);
+			loaded.HoleCardIconWidth = GetOr(hud, "HoleCardIconWidth", defaults.HoleCardIconWidth);
+			loaded.HoleCardIconHeight = GetOr(hud, "HoleCardIconHeight", defaults.HoleCardIconHeight);
+			loaded.NextCardIconBaseX = GetOr(hud, "NextCardIconBaseX", defaults.NextCardIconBaseX);
+			loaded.NextCardIconY = GetOr(hud, "NextCardIconY", defaults.NextCardIconY);
+			loaded.NextCardIconSpacingX = GetOr(hud, "NextCardIconSpacingX", defaults.NextCardIconSpacingX);
+			loaded.NextCardIconWidth = GetOr(hud, "NextCardIconWidth", defaults.NextCardIconWidth);
+			loaded.NextCardIconHeight = GetOr(hud, "NextCardIconHeight", defaults.NextCardIconHeight);
+			loaded.MyHandIconX = GetOr(hud, "MyHandIconX", defaults.MyHandIconX);
+			loaded.MyHandIconY = GetOr(hud, "MyHandIconY", defaults.MyHandIconY);
+			loaded.MyHandIconSpacingX = GetOr(hud, "MyHandIconSpacingX", defaults.MyHandIconSpacingX);
+			loaded.MyHandIconWidth = GetOr(hud, "MyHandIconWidth", defaults.MyHandIconWidth);
+			loaded.MyHandIconHeight = GetOr(hud, "MyHandIconHeight", defaults.MyHandIconHeight);
 #endif
 		}
 
-		// Rebuilt from scratch rather than reusing the sections just
-		// parsed above -- any key not explicitly written back below (a
-		// stale leftover from a removed feature, e.g. ShowPlayerHands/
-		// ShowInsuranceAdvice/ShowCardCount from before Session 8) is
-		// dropped instead of round-tripping forever. Only the toggles
-		// that actually do something in Release belong in [General]
-		// (Session 8, user request).
-		ini.sections.clear();
+		g_values = loaded;
 
-		auto& general = ini.sections["General"];
+		// The sections this build owns are rebuilt from scratch rather
+		// than reusing the ones just parsed above -- any key not
+		// explicitly written back below (a stale leftover from a removed
+		// feature, e.g. ShowPlayerHands/ShowInsuranceAdvice/ShowCardCount
+		// from before Session 8) is dropped instead of round-tripping
+		// forever. Only the toggles that actually do something in
+		// Release belong in [General] (Session 8, user request).
+		//
+		// Code-review fix: every OTHER section is carried over untouched.
+		// This used to clear the whole file, so a Release build wiped the
+		// Debug-only [HUD] section (a tuned layout, when both builds
+		// share one INI) along with anything else it didn't recognize.
+		inipp::Ini<char> out;
+		out.sections = ini.sections;
+		out.sections.erase("General");
+#ifdef _DEBUG
+		out.sections.erase("HUD");
+#endif
+
+		auto& general = out.sections["General"];
 		SetBool(general, "ShowDealerHand", g_values.ShowDealerHand);
 		SetBool(general, "ShowBettingAdvice", g_values.ShowBettingAdvice);
 		SetBool(general, "ShowAdvice", g_values.ShowAdvice);
@@ -121,7 +140,7 @@ namespace
 		general["Language"] = g_values.Language;
 
 #ifdef _DEBUG
-		auto& hud = ini.sections["HUD"];
+		auto& hud = out.sections["HUD"];
 		SetFloat(hud, "PanelX", g_values.PanelX);
 		SetFloat(hud, "PanelY", g_values.PanelY);
 		SetFloat(hud, "TextScale", g_values.TextScale);
@@ -144,6 +163,19 @@ namespace
 		SetFloat(hud, "MyHandIconHeight", g_values.MyHandIconHeight);
 #endif
 
+		// Code-review fix: only rewrite the file when it's missing or its
+		// owned sections actually differ from what would be written
+		// (a missing key, a stale one to prune, a value to normalize).
+		// inipp's generate() can't round-trip comments, so rewriting an
+		// already-complete file on every load/Reload Config silently
+		// deleted any notes the user had added to it.
+		if (fileRead && out.sections == ini.sections)
+		{
+			Log::Write(L"Config::Reload -- loaded from {}, already up to date (ShowDealerHand={} ShowBettingAdvice={} ShowAdvice={} ShowDeckPrediction={} ShowCardsBeforeBet={})",
+				IniPaths().read, g_values.ShowDealerHand, g_values.ShowBettingAdvice, g_values.ShowAdvice, g_values.ShowDeckPrediction, g_values.ShowCardsBeforeBet);
+			return;
+		}
+
 		if (IniPaths().usedFallback)
 			Log::Write("Config::Reload -- the game folder isn't writable, so settings are saved to {}",
 				LogFallback::ToUtf8(IniPaths().write));
@@ -153,7 +185,7 @@ namespace
 			std::ofstream os(IniPaths().write, std::ios::trunc);
 			Log::Trace("Config: ini open for write {}", os ? "succeeded" : "failed");
 			if (os)
-				ini.generate(os);
+				out.generate(os);
 			else
 				Log::Write(L"Config::Reload -- failed to open {} for writing", IniPaths().write);
 		}

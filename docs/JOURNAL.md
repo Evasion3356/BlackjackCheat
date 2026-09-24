@@ -1735,3 +1735,37 @@ step reached if opening the log file is what crashes. Not yet run in-game.
 on disk only because the folder had no version control at the time. It
 does now, so they are deleted (plus the stale `ClInclude` in
 `BlackjackCheat.vcxproj`), recoverable from git history.
+
+## Session 18 -- code review fixes
+
+A full code review found, and this session fixed (see `docs/CHANGELOG.md`
+[Unreleased] and each fix's own "Code-review" comment in the source):
+
+- **Bet offset (`kSeatBetOffset` 4 -> 5), NOT yet confirmed live.**
+  `seat.f_4[h]` is a script array, and a YSC array's first word is its
+  element count, so `f_4` itself is the size word (2) and `bet[h]` is at
+  `f_4 + 1 + h`. Evidence: Session 9's raw dump table logged `f_4[0] = 2`
+  for all three seats, including the human seat before it had confirmed a
+  bet; and size + 2 bets = `f_4..f_6` ends right before the live-confirmed
+  bet-lock flag at `f_7`. The old read made `canDouble` reduce to
+  `bankroll >= 2`. **To confirm:** bet something other than $2, run
+  F11 -> Probe Seat Hands, and check that `bet(f_4[0])` shows the real bet
+  and `betArraySizeWord(f_4)` shows 2.
+- **Turn gating relies on `seat.f_3` (static trace only).** Advice now
+  requires every occupied lower seat to read `f_3 >= f_59` and my own
+  `f_3 < f_59`. If `f_3` doesn't behave as traced, advice will never
+  appear, which is easy to spot. The Debug panel now has a
+  "Turn f_3/f_59" line showing each seat's values: expect `0/1` while a
+  seat waits or acts and `1/1` once it's done (`2/2` after a split).
+- The insurance window is inferred from the deck cursor still sitting
+  exactly at the end of the initial deal (2 cards per dealt seat + 2 for
+  the dealer). If insurance ever fails to show at the real prompt, check
+  the cursor at that moment with Probe Table Struct.
+- `tests/BlackjackHandEvalTests.cpp`'s "hard 11 with 3 cards" case had
+  been passing `count=3` with a 2-element array (out of bounds), which
+  passed under MSVC by luck and failed under g++. Fixed with a real 3-card
+  hand.
+- Considered and rejected: preferring the fewest hits among winning
+  candidates in `DetermineCheatAction()`. See `BlackjackDeckSim.h`'s
+  header comment (code-review addendum, item 2).
+

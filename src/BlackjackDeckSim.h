@@ -63,7 +63,8 @@
 // dealt (both post-split hands' one guaranteed card, then each hand
 // played out via DetermineCheatAction()'s own advice to its own
 // conclusion, then the dealer's real draw-out) and compare the summed
-// result, in bet-unit terms (Win=+1/Push=0/Loss=-1 per hand), against
+// result, in bet-unit terms (Win=+1/Push=0/Loss=-1 per hand, doubled for
+// a hand that doubled -- see the code-review addendum at the end), against
 // just playing the pair as one ordinary hand. Same trustworthiness
 // precondition as DetermineCheatAction() (isLastSeatBeforeDealer OR the
 // dealer's already-dealt hand is already 17+) -- when that doesn't
@@ -133,6 +134,31 @@
 // tie-break already relies on. See
 // tests/BlackjackDeckSimTests.cpp's "fallback known downgrade card
 // overrides to Stand" case.
+//
+// Code-review addendum -- two more fixes, each pinned by a new test in
+// tests/BlackjackDeckSimTests.cpp (numbered (1) and (3); (2) was a
+// proposed change that was tried and rejected, kept here so it isn't
+// retried):
+// (1) The fallback's one-card lookahead above was itself too narrow: when
+//     the fallback triggers, only the DEALER's cards are uncertain -- this
+//     hand's own hits all come straight off the live cursor, so every one
+//     of them is known, not just the first. Soft 16 (A,5) with known next
+//     cards 6 then 5 was forced to Stand because A,5,6 is a hard 12, even
+//     though A,5,6,5 is 21. detail::RefineFallbackWithOwnCards() now walks
+//     every known stopping point instead, treating all totals <= 16 as
+//     equally weak (the dealer always finishes on 17+ or busts, so 12 and
+//     16 lose and win in exactly the same cases).
+// (2) REJECTED: keeping the fewest hits among winning candidates instead
+//     of the highest total. It looks safer (why hit a hand that already
+//     wins?), but a standing "win" can depend entirely on the dealer
+//     busting on the next card -- hard 11 vs a dealer 15 with a known 10
+//     next "wins" by standing, where hitting to a known 21 wins without
+//     depending on the dealer's draw at all. The highest-total tie-break
+//     stays; see DetermineCheatAction()'s inline comment.
+// (3) EvaluateSplit() scored every hand as +/-1, even one that doubled
+//     (PlayHandOut() only doubles into a known Win), so it undervalued
+//     exactly the lines it picked Double for. PlayoutResult now records
+//     `doubled` and StakedOutcomeValue() weighs it as 2 units.
 
 #include "BlackjackHandEval.h"
 
@@ -215,6 +241,102 @@ namespace BlackjackDeckSim
 		return result;
 	}
 
+	namespace detail
+	{
+		// A non-bust total's strength against a dealer that's unknown but
+		// guaranteed to finish on 17+ or bust (it stands on 17, see
+		// SimulateDealerFromRanks): every total <= 16 loses to every
+		// non-bust dealer hand and wins only when the dealer busts, so
+		// they're all equivalent -- 12 is no worse than 16. Bust is worst.
+		inline std::int32_t EffectiveStrength(const BlackjackHandEval::HandValue& value)
+		{
+			if (value.bust)
+				return -1;
+			return value.total < 16 ? 16 : value.total;
+		}
+
+		// DetermineCheatAction()'s fallback path (the dealer's draw-out
+		// can't be trusted because another seat still acts first) --
+		// basic strategy is blind to the deck, but THIS hand's own future
+		// cards are still exact: it's this hand's turn, so every card it
+		// hits draws the next card off the live cursor with nothing in
+		// between, however many hits that is. So instead of peeking at
+		// only the very next card, this walks every known "stand after k
+		// more hits" stopping point and keeps the strongest one by
+		// EffectiveStrength() (ties toward fewer hits). A strictly
+		// stronger total is never worse against ANY eventual dealer hand
+		// (CompareOutcome only looks at total/bust), so this needs no
+		// dealer simulation at all.
+		//
+		// Live bug this replaces: the old one-card lookahead forced Stand
+		// on soft 16 (A,5) with known next cards 6 then 5 -- A,5,6 is a
+		// hard 12 (a "downgrade"), but A,5,6,5 is 21.
+		//
+		// - Strongest stopping point is k=0 and a known card busts or
+		//   the known cards never beat the current hand -> Stand.
+		// - Strongest stopping point is k>=1 -> Hit (even if basic
+		//   strategy said Stand: a known improvement dominates), or
+		//   Double when basic strategy already favors doubling here AND
+		//   the single next card is itself the strongest stopping point.
+		// - Ran out of known cards without busting (only happens with a
+		//   near-empty deck) and nothing known beats the current hand:
+		//   the cards beyond are unknown, so keep basic strategy's call
+		//   unless the very next card is a known strict downgrade.
+		inline BlackjackHandEval::Action RefineFallbackWithOwnCards(BlackjackHandEval::Action fallback,
+			const std::int32_t* playerRanks, std::int32_t playerCount,
+			const std::int32_t* futureRanks, std::int32_t futureCount)
+		{
+			std::int32_t ranks[kHandMaxCards];
+			std::int32_t count = playerCount > kHandMaxCards ? kHandMaxCards : playerCount;
+			for (std::int32_t i = 0; i < count; i++)
+				ranks[i] = playerRanks[i];
+
+			BlackjackHandEval::HandValue current = BlackjackHandEval::EvaluateHand(ranks, count);
+			const std::int32_t currentStrength = EffectiveStrength(current);
+			std::int32_t bestStrength = currentStrength;
+			std::int32_t bestExtraHits = 0;
+			std::int32_t oneHitStrength = -2; // -2 = no known next card
+			bool exhausted = false;
+
+			for (std::int32_t extraHits = 1; ; extraHits++)
+			{
+				std::int32_t futureIndex = extraHits - 1;
+				if (futureIndex >= futureCount || count >= kHandMaxCards)
+				{
+					exhausted = true;
+					break;
+				}
+
+				ranks[count] = futureRanks[futureIndex];
+				count++;
+				std::int32_t strength = EffectiveStrength(BlackjackHandEval::EvaluateHand(ranks, count));
+				if (extraHits == 1)
+					oneHitStrength = strength;
+				if (strength < 0)
+					break; // bust -- every later stopping point busts too
+				if (strength > bestStrength)
+				{
+					bestStrength = strength;
+					bestExtraHits = extraHits;
+				}
+			}
+
+			if (bestExtraHits >= 1)
+			{
+				if (fallback == BlackjackHandEval::Action::Double && bestExtraHits == 1)
+					return BlackjackHandEval::Action::Double;
+				return BlackjackHandEval::Action::Hit;
+			}
+
+			if (!exhausted)
+				return BlackjackHandEval::Action::Stand;
+
+			if (oneHitStrength != -2 && oneHitStrength < currentStrength)
+				return BlackjackHandEval::Action::Stand;
+			return fallback;
+		}
+	}
+
 	// The actual "pure cheat" hit/stand/double decision -- see this file's
 	// own header comment above for the full derivation and the bug it was
 	// written to fix. playerRanks/playerCount is the current hand;
@@ -289,46 +411,7 @@ namespace BlackjackDeckSim
 		{
 			std::int32_t dealerUpcardRank = dealerCount >= 2 ? dealerRanks[1] : dealerRanks[0];
 			BlackjackHandEval::Action fallback = BlackjackHandEval::GetBasicStrategyAction(playerRanks, playerCount, dealerUpcardRank, canDouble, /*canSplit*/ false, isSplitAceHand);
-
-			// One piece of the deck is still exact even here: it's this
-			// hand's own turn right now, so the very next undrawn card is
-			// guaranteed to be what THIS hand draws if it hits/doubles --
-			// nothing else can get to it first. Basic strategy is blind
-			// to that card by design; never let it recommend drawing a
-			// card already known to bust us -- and, live bug report
-			// (soft 18 [A,7], known next card 5, fallback said Hit):
-			// never let it recommend drawing a card that's a KNOWN
-			// non-bust DOWNGRADE either. A,7,5 demotes to a hard 13 --
-			// not a bust, but strictly worse than the 18 already in
-			// hand, the exact same "known certain deterioration" shape
-			// as the bust check just below, just without busting. A
-			// strictly lower non-bust total can never compare better
-			// against any fixed (even unknown) dealer hand than the
-			// higher total already in hand -- CompareOutcome only ever
-			// looks at total/bust, so this holds regardless of what the
-			// dealer's own eventual hand turns out to be, the same
-			// dealer-independent guarantee the trustworthy simulation
-			// path's own tie-break-toward-higher-total already relies
-			// on (see TestSoftEighteenStandsWhenNextCardOnlyLowersTotal
-			// in tests/BlackjackDeckSimTests.cpp for that path's
-			// equivalent case).
-			if ((fallback == BlackjackHandEval::Action::Hit || fallback == BlackjackHandEval::Action::Double) && futureCount > 0 && playerCount < kHandMaxCards)
-			{
-				BlackjackHandEval::HandValue currentValue = BlackjackHandEval::EvaluateHand(playerRanks, playerCount);
-
-				std::int32_t ranks[kHandMaxCards];
-				std::int32_t count = playerCount;
-				for (std::int32_t i = 0; i < count; i++)
-					ranks[i] = playerRanks[i];
-				ranks[count] = futureRanks[0];
-				count++;
-
-				BlackjackHandEval::HandValue nextValue = BlackjackHandEval::EvaluateHand(ranks, count);
-				if (nextValue.bust || nextValue.total < currentValue.total)
-					return BlackjackHandEval::Action::Stand;
-			}
-
-			return fallback;
+			return detail::RefineFallbackWithOwnCards(fallback, playerRanks, playerCount, futureRanks, futureCount);
 		}
 
 		std::int32_t ranks[kHandMaxCards];
@@ -357,7 +440,13 @@ namespace BlackjackDeckSim
 			// Tie-break within the same outcome rank toward the HIGHER
 			// total instead of keeping whichever candidate was evaluated
 			// first -- see this file's own header comment for the bug
-			// this specifically fixes.
+			// this specifically fixes. This deliberately applies to
+			// winning candidates too: "fewest hits among wins" was tried
+			// (code-review addendum) and rejected, because it would stand
+			// a hard 11 whose standing "win" relies entirely on the dealer
+			// busting on the next card, where hitting to a known 21 wins
+			// without depending on the dealer's draw at all -- see
+			// TestKnownWinningCardIsDouble.
 			if (!haveBest || rank > bestRank || (rank == bestRank && value.total > bestTotal))
 			{
 				bestRank = rank;
@@ -397,7 +486,17 @@ namespace BlackjackDeckSim
 	{
 		BlackjackHandEval::HandValue value;
 		std::int32_t consumed = 0; // cards actually drawn from futureRanks
+		bool doubled = false;      // the hand doubled, so its outcome is worth 2 bet units, not 1
 	};
+
+	// Bet-unit value of a played-out hand's outcome: OutcomeValue()
+	// scaled by the hand's stake (2 units once doubled). EvaluateSplit()
+	// needs this -- scoring a doubled hand as +/-1 undervalues exactly
+	// the lines the engine picks Double for.
+	inline std::int32_t StakedOutcomeValue(Outcome outcome, const PlayoutResult& hand)
+	{
+		return OutcomeValue(outcome) * (hand.doubled ? 2 : 1);
+	}
 
 	// Plays a hand to its own conclusion by repeatedly asking
 	// DetermineCheatAction() what it would do and applying that action,
@@ -439,7 +538,10 @@ namespace BlackjackDeckSim
 			result.value = BlackjackHandEval::EvaluateHand(ranks, count);
 
 			if (action == BlackjackHandEval::Action::Double)
+			{
+				result.doubled = true;
 				break; // exactly one card, then forced stand
+			}
 		}
 
 		return result;
@@ -483,7 +585,7 @@ namespace BlackjackDeckSim
 		// Value of NOT splitting: play the pair as one ordinary hand.
 		PlayoutResult noSplit = PlayHandOut(playerRanks, 2, dealerRanks, dealerCount, futureRanks, futureCount, canDoubleAfterSplit, isLastSeatBeforeDealer);
 		DealerSimResult dealerForNoSplit = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + noSplit.consumed, futureCount - noSplit.consumed);
-		std::int32_t noSplitValue = OutcomeValue(CompareOutcome(noSplit.value, dealerForNoSplit.value));
+		std::int32_t noSplitValue = StakedOutcomeValue(CompareOutcome(noSplit.value, dealerForNoSplit.value), noSplit);
 
 		// Value of splitting: both new hands get their one guaranteed
 		// card immediately (future[0] then future[1], per bjack_sp's own
@@ -514,8 +616,8 @@ namespace BlackjackDeckSim
 		std::int32_t dealerFutureOffset = hand2FutureOffset + hand2.consumed;
 		DealerSimResult dealerForSplit = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + dealerFutureOffset, futureCount - dealerFutureOffset);
 
-		std::int32_t splitValue = OutcomeValue(CompareOutcome(hand1.value, dealerForSplit.value, /*playerNaturalCounts*/ false))
-			+ OutcomeValue(CompareOutcome(hand2.value, dealerForSplit.value, /*playerNaturalCounts*/ false));
+		std::int32_t splitValue = StakedOutcomeValue(CompareOutcome(hand1.value, dealerForSplit.value, /*playerNaturalCounts*/ false), hand1)
+			+ StakedOutcomeValue(CompareOutcome(hand2.value, dealerForSplit.value, /*playerNaturalCounts*/ false), hand2);
 
 		result.trustworthy = true;
 		result.shouldSplit = splitValue > noSplitValue;

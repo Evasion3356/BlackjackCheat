@@ -259,22 +259,23 @@ the INI you're testing with there is never overwritten.
   launcher/wrapper. No `act_gen_blackjack.ysc.c`-style shared framework
   file was found next to it (unlike poker's `act_gen_poker.ysc.c`) --
   everything traced so far was self-contained in `bjack_sp.ysc.c` itself.
-- `..\ScriptHookSDK\` -- local copy of Alexander Blade's ScriptHookRDR2 SDK,
-  same shared copy PokerCheat/CollectorOffline use. The `ScriptHookRDR2.dll`
-  runtime itself (not redistributed here) must be downloaded from
-  http://www.dev-c.com/rdr2/scripthookrdr2/ matching game build 1491.50.
-- `external\RDR-Classes\`, `external\inipp\` -- vendored copies (same
-  content as PokerCheat's own `external\`, copied rather than shared since
-  PokerCheat's copy lives inside its own project folder, not at the
-  `RDR2 Shit` root).
-- `external\spdlog\` -- a real git submodule (`.gitmodules`), unlike the
-  two entries above, pinned to release tag v1.17.0
-  (https://github.com/gabime/spdlog). Backs `src/Log.h`. **A fresh clone
-  of this repo needs `git submodule update --init` before it'll build**
-  -- the headers won't exist otherwise. Header-only (no `.cpp`/`.lib` to
-  add to the vcxproj); built with `SPDLOG_USE_STD_FORMAT` +
-  `SPDLOG_WCHAR_TO_UTF8_SUPPORT` (both defined in `src/Log.h` before
-  including any spdlog header) rather than spdlog's bundled fmt.
+- All four `external\` dependencies are git submodules (`.gitmodules`),
+  so **a fresh clone needs `git submodule update --init` before it'll
+  build** -- the headers won't exist otherwise:
+  - `external\ScriptHookSDK\` -- Alexander Blade's ScriptHookRDR2 SDK
+    (headers + `lib\ScriptHookRDR2.lib`, which the vcxproj links against).
+    The `ScriptHookRDR2.dll` runtime itself (not redistributed here) must
+    be downloaded from http://www.dev-c.com/rdr2/scripthookrdr2/ matching
+    game build 1491.50.
+  - `external\RDR-Classes\` -- YimMenu's RDR2 class layouts (the
+    `rage::scrThread` etc. that `GamePointers` reads).
+  - `external\inipp\` -- the INI parser behind `src/Config.cpp`.
+  - `external\spdlog\` -- pinned to release tag v1.17.0
+    (https://github.com/gabime/spdlog). Backs `src/Log.h`. Header-only
+    (no `.cpp`/`.lib` to add to the vcxproj); built with
+    `SPDLOG_USE_STD_FORMAT` + `SPDLOG_WCHAR_TO_UTF8_SUPPORT` (both defined
+    in `src/Log.h` before including any spdlog header) rather than
+    spdlog's bundled fmt.
 - `..\PokerCheat\` -- read `docs/JOURNAL.md` there for the actual
   live-probing methodology (trace statically, run a `Probe*` menu item
   in-game, compare the log against the real screen, re-derive when wrong)

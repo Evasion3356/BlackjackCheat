@@ -136,13 +136,18 @@ jobs:
         run: |
           $title = "$env:PROJECT $env:RELEASE_VERSION"
           gh release view $env:TAG *> $null
+          # Check every gh call: $LASTEXITCODE only reflects the most
+          # recent one, so a failed `release edit` used to go unnoticed
+          # whenever the `release upload` after it succeeded.
           if ($LASTEXITCODE -eq 0) {
             gh release edit $env:TAG --title $title --notes-file notes.md
+            if ($LASTEXITCODE) { throw "Updating the release notes failed" }
             gh release upload $env:TAG $env:ZIP $env:ASI --clobber
+            if ($LASTEXITCODE) { throw "Uploading the release files failed" }
           } else {
             gh release create $env:TAG $env:ZIP $env:ASI --title $title --notes-file notes.md --verify-tag
+            if ($LASTEXITCODE) { throw "Creating the release failed" }
           }
-          if ($LASTEXITCODE) { throw "Publishing the release failed" }
 
       # Pinned to a commit rather than a tag, since it is handed the API key.
       - name: Upload to Nexus Mods

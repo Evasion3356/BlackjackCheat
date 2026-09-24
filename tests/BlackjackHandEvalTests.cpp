@@ -88,7 +88,11 @@ namespace
 		std::int32_t hand11[2] = { 6, 5 }; // hard 11
 		Check(GetBasicStrategyAction(hand11, 2, 6, true, true) == Action::Double, "hard 11 vs dealer 6 is Double", "11 doubles against every upcard except Ace");
 		Check(GetBasicStrategyAction(hand11, 2, 14, true, true) == Action::Hit, "hard 11 vs dealer Ace is Hit", "11 vs Ace is the one exception to always-double");
-		Check(GetBasicStrategyAction(hand11, 3, 6, false, true) == Action::Hit, "hard 11 with 3 cards falls back to Hit", "double isn't legal past the first two cards");
+		// A real 3-card array -- this case used to pass count=3 with the 2-card
+		// hand11 array above, reading one element past its end (undefined
+		// behavior that happened to pass under MSVC and failed under g++).
+		std::int32_t hand11ThreeCards[3] = { 2, 4, 5 }; // hard 11
+		Check(GetBasicStrategyAction(hand11ThreeCards, 3, 6, false, true) == Action::Hit, "hard 11 with 3 cards falls back to Hit", "double isn't legal past the first two cards");
 
 		std::int32_t hand12[2] = { 10, 2 }; // hard 12
 		Check(GetBasicStrategyAction(hand12, 2, 4, true, true) == Action::Stand, "hard 12 vs dealer 4 is Stand", "12 stands only against 4-6");
@@ -107,6 +111,23 @@ namespace
 		std::int32_t soft13[2] = { 14, 2 }; // A,2
 		Check(GetBasicStrategyAction(soft13, 2, 5, true, true) == Action::Double, "soft 13 vs dealer 5 is Double", "A2 only doubles against 5-6");
 		Check(GetBasicStrategyAction(soft13, 2, 9, true, true) == Action::Hit, "soft 13 vs dealer 9 is Hit", "A2 vs a strong dealer card is just Hit");
+
+		// Soft 18 vs 3-6 is "double, else STAND" -- when doubling isn't
+		// legal it must not fall through to the Hit reserved for 9/10/Ace.
+		Check(GetBasicStrategyAction(soft18, 2, 5, false, true) == Action::Stand, "soft 18 vs dealer 5 without double is Stand", "A7 vs 3-6 is double-else-stand, not double-else-hit");
+		std::int32_t soft18ThreeCards[3] = { 14, 2, 5 }; // A,2,5 = soft 18
+		Check(GetBasicStrategyAction(soft18ThreeCards, 3, 4, true, false) == Action::Stand, "3-card soft 18 vs dealer 4 is Stand", "double isn't legal on 3 cards, so soft 18 vs 3-6 stands");
+		Check(GetBasicStrategyAction(soft18ThreeCards, 3, 10, true, false) == Action::Hit, "3-card soft 18 vs dealer 10 is still Hit", "the 9/10/Ace Hit is unaffected by the double-else-stand fix");
+
+		// Soft 17 vs 3-6 is "double, else HIT" -- unlike soft 18.
+		std::int32_t soft17[2] = { 14, 6 }; // A,6
+		Check(GetBasicStrategyAction(soft17, 2, 5, false, false) == Action::Hit, "soft 17 vs dealer 5 without double is Hit", "A6 vs 3-6 is double-else-hit");
+
+		// Unsplittable A,A (split already used) is a soft 12: always Hit,
+		// never the soft-13/14 double against 5-6.
+		std::int32_t aces[2] = { 14, 14 };
+		Check(GetBasicStrategyAction(aces, 2, 5, true, false) == Action::Hit, "unsplittable A,A vs dealer 5 is Hit", "soft 12 never doubles");
+		Check(GetBasicStrategyAction(aces, 2, 6, true, false) == Action::Hit, "unsplittable A,A vs dealer 6 is Hit", "soft 12 never doubles");
 	}
 
 	void TestBasicStrategyPairs()

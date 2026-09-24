@@ -45,8 +45,9 @@
 	every other call site is either Debug-only (`#ifdef _DEBUG`) or a
 	Probe*-/Dump*-prefixed function only reachable from the Debug-only F11
 	menu. In Release, `Log::Write` fires a handful of times total per session
-	(`DllMain`'s `Config::Reload`/`GamePointers::GetScriptThreads`,
-	`ScriptMain`'s "started" line, `SetEnabled(true)`) -- never per-tick --
+	(`ScriptMain`'s "started" line, its startup `Config::Reload`/
+	`GamePointers::GetScriptThreads` calls, `SetEnabled(true)`, and
+	`Localization::Refresh` on first use) -- never per-tick --
 	so even a synchronous write+flush's worst-case latency on a tired
 	5400rpm HDD (low single-digit milliseconds) is a one-time cost buried
 	in game-load/toggle time, not a per-frame one.

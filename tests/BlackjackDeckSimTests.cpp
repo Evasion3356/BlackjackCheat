@@ -169,13 +169,14 @@ namespace
 		// The actual live bug: the user was NOT last to act that round --
 		// another occupied seat still had to play before the dealer, so
 		// the "dealer's next card" assumption above never held. This
-		// must now defer entirely to basic strategy instead of Stand --
-		// hard 9 vs a dealer up-card of 6 (dealerRanks[1], the real
-		// visible card) is a textbook Double (BlackjackHandEval.h,
-		// total==9 && dealerVal in [3,6]).
+		// must no longer trust the dealer simulation, and must never
+		// Stand. Basic strategy alone says Double (hard 9 vs up-card 6),
+		// but this hand's own next cards are still exact: doubling takes
+		// only the 6 (a weak 15), while two hits reach 9+6+4=19 -- so the
+		// fallback's own-card refinement demotes Double to Hit.
 		Action notLastSeat = DetermineCheatAction(player, 2, dealer, 2, future, 9, /*canDouble*/ true, false, /*isLastSeatBeforeDealer*/ false);
-		Check(notLastSeat == Action::Double, "the same hand with another seat still to act falls back to basic strategy, never Stand",
-			"a bust-proof hard 9 must never Stand when this function can't trust its own dealer simulation -- basic strategy vs dealer 6 says Double");
+		Check(notLastSeat == Action::Hit, "the same hand with another seat still to act never Stands, and doesn't Double into a known weak 15",
+			"the dealer simulation isn't trusted here, but this hand's own known cards are: Double stops at 15, two hits reach 19");
 
 		Action notLastSeatNoDouble = DetermineCheatAction(player, 2, dealer, 2, future, 9, /*canDouble*/ false, false, /*isLastSeatBeforeDealer*/ false);
 		Check(notLastSeatNoDouble == Action::Hit, "same fallback with canDouble=false is Hit, still never Stand",
@@ -247,7 +248,14 @@ namespace
 		Check(decision.trustworthy, "dealer already pat at 17 makes the split comparison trustworthy even with another seat still to act",
 			"the dealer never draws from here regardless of other seats, same rule DetermineCheatAction() already uses");
 		Check(decision.shouldSplit, "known upcoming cards make splitting these tens strictly more profitable than standing pat",
-			"21 + 19, both beating a dealer 17, is +2 bet units versus +1 for doubling the un-split pair to a lone winning 21");
+			"21 + a doubled 19 (J,2,7), both beating a dealer 17, is +3 bet units versus +2 for doubling the un-split pair to a lone winning 21");
+
+		// With doubling off, the un-split pair can only Hit its way to
+		// that 21 (+1), so splitting (+2) still wins -- the original live
+		// bug report's comparison.
+		SplitDecision noDouble = EvaluateSplit(player, 2, dealer, 2, future, 3, /*canDoubleAfterSplit*/ false, /*isLastSeatBeforeDealer*/ false);
+		Check(noDouble.trustworthy && noDouble.shouldSplit, "the same split without doubling is still +2 versus +1",
+			"21 + 19 beats a single hit-to-21");
 	}
 
 	// Control for the above: same pair, but the known future cards don't
@@ -617,6 +625,74 @@ namespace
 			"both post-split hands need their own immediate card before any comparison is meaningful");
 	}
 
+	// Code-review fix: the fallback's known-card check used to look only
+	// one card ahead. Soft 16 (A,5) with known next cards 6 then 5: the 6
+	// alone makes a hard 12 (a "downgrade"), which forced Stand -- but the
+	// 5 after it makes 21. This hand's own hits are all exact even when
+	// the dealer simulation isn't trusted, so the fallback must look at
+	// every known stopping point, not just the first.
+	void TestFallbackLooksPastAKnownDowngradeToALaterImprovement()
+	{
+		std::printf("TestFallbackLooksPastAKnownDowngradeToALaterImprovement:\n");
+
+		std::int32_t player[2] = { 14, 5 }; // A,5 = soft 16
+		std::int32_t dealer[2] = { 2, 10 }; // 12, must hit -- dealer sim not trusted with another seat to act
+		std::int32_t future[3] = { 6, 5, 10 }; // A,5,6 = hard 12, then A,5,6,5 = 21, then a bust
+
+		Action action = DetermineCheatAction(player, 2, dealer, 2, future, 3, /*canDouble*/ true, false, /*isLastSeatBeforeDealer*/ false);
+		Check(action == Action::Hit, "soft 16 with known 6 then 5 is Hit, not Stand",
+			"A,5,6 is only a hard 12, but A,5,6,5 is 21 -- a later known card can redeem an early downgrade");
+
+		// Same hand, but the card after the downgrade busts: nothing known
+		// ever beats the current soft 16 (12 is exactly as weak as 16
+		// against a dealer that always finishes on 17+), so Stand.
+		std::int32_t futureNoHelp[2] = { 6, 10 }; // A,5,6 = 12, then 22
+		Action standAction = DetermineCheatAction(player, 2, dealer, 2, futureNoHelp, 2, true, false, false);
+		Check(standAction == Action::Stand, "soft 16 with known 6 then a bust card is Stand",
+			"no known stopping point beats the current hand, and the one after the downgrade busts");
+	}
+
+	// Code-review fix: a known improvement overrides a textbook Stand in
+	// the fallback too, not only a textbook Hit. Hard 13 vs dealer 6 is a
+	// textbook Stand, but a known 4 next makes 17, which is never worse
+	// than 13 against any dealer result and strictly better against 17.
+	void TestFallbackKnownImprovementOverridesTextbookStand()
+	{
+		std::printf("TestFallbackKnownImprovementOverridesTextbookStand:\n");
+
+		std::int32_t player[2] = { 10, 3 }; // hard 13
+		std::int32_t dealer[2] = { 10, 6 }; // 16, must hit -- up card 6
+		std::int32_t future[2] = { 4, 10 }; // 13+4=17, then a bust
+
+		BlackjackHandEval::Action textbook = BlackjackHandEval::GetBasicStrategyAction(player, 2, dealer[1], true, false, false);
+		Check(textbook == Action::Stand, "sanity check: textbook says Stand on hard 13 vs 6", "baseline this test overrides");
+
+		Action action = DetermineCheatAction(player, 2, dealer, 2, future, 2, /*canDouble*/ true, false, /*isLastSeatBeforeDealer*/ false);
+		Check(action == Action::Hit, "hard 13 vs 6 with a known 4 next is Hit in the fallback",
+			"17 is never worse than 13 against any dealer hand -- a known improvement dominates the textbook Stand");
+	}
+
+	// Code-review fix: EvaluateSplit() used to score every hand +/-1 even
+	// when it doubled, undervaluing the lines it doubles into. 5,5 vs a
+	// dealer pat at 17, known cards 7, Q, 8, 7: un-split, 5,5 hits the 7
+	// to a pushing 17 (0). Split, hand 1 (5,7=12) doubles into the 8 for
+	// a winning 20 (+2 units) and hand 2 (5,Q=15) can only stand and lose
+	// (-1), for +1 total -- the old +/-1 scoring called that 0 and
+	// declined the split.
+	void TestSplitCountsADoubledHandAsTwoUnits()
+	{
+		std::printf("TestSplitCountsADoubledHandAsTwoUnits:\n");
+
+		std::int32_t player[2] = { 5, 5 };
+		std::int32_t dealer[2] = { 10, 7 }; // 17, stands pat
+		std::int32_t future[4] = { 7, 12, 8, 7 };
+
+		SplitDecision decision = EvaluateSplit(player, 2, dealer, 2, future, 4, /*canDoubleAfterSplit*/ true, /*isLastSeatBeforeDealer*/ false);
+		Check(decision.trustworthy, "dealer pat at 17 is trustworthy", "same short-circuit as every other split case");
+		Check(decision.shouldSplit, "a doubled winning split hand counts 2 units, making the split worth +1 versus a push",
+			"+2 (doubled 20) - 1 (lone 15) = +1 beats the un-split push (0); scoring the double as +1 made it a 0-0 tie");
+	}
+
 	// SimulateDealerFromRanks() in isolation: dealer must keep drawing
 	// while under 17 and stop the instant it reaches 17+, consuming
 	// exactly as many future cards as needed and no more.
@@ -809,6 +885,9 @@ int main()
 	TestSplitAcesForcedStandStillBeatsTheUnsplitAlternative();
 	TestSplitFivesDoublesWithinEachNewHand();
 	TestSplitNotTrustworthyWithTooFewFutureCards();
+	TestFallbackLooksPastAKnownDowngradeToALaterImprovement();
+	TestFallbackKnownImprovementOverridesTextbookStand();
+	TestSplitCountsADoubledHandAsTwoUnits();
 	TestDealerSimulationStopsAtSeventeen();
 	TestBettingConfidenceNaturalBlackjackIsHigh();
 	TestBettingConfidenceBothBlackjackIsPush();

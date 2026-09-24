@@ -176,6 +176,8 @@ namespace BlackjackHandEval
 
 		inline Action SoftAction(std::int32_t total, std::int32_t dealerVal, bool canDouble)
 		{
+			if (total <= 12) // soft 12 -- only reachable as an unsplittable A,A (or a 3+ card soft 12); always Hit
+				return Action::Hit;
 			if (total <= 14) // soft 13 (A,2) / soft 14 (A,3)
 				return (canDouble && dealerVal >= 5 && dealerVal <= 6) ? Action::Double : Action::Hit;
 			if (total <= 16) // soft 15 (A,4) / soft 16 (A,5)
@@ -184,8 +186,11 @@ namespace BlackjackHandEval
 				return (canDouble && dealerVal >= 3 && dealerVal <= 6) ? Action::Double : Action::Hit;
 			if (total == 18) // soft 18 (A,7)
 			{
-				if (canDouble && dealerVal >= 3 && dealerVal <= 6)
-					return Action::Double;
+				// "Double, else Stand" vs 3-6: when doubling isn't legal
+				// (3+ cards, or no bankroll) soft 18 stands there, it
+				// doesn't fall through to the Hit reserved for 9/10/Ace.
+				if (dealerVal >= 3 && dealerVal <= 6)
+					return canDouble ? Action::Double : Action::Stand;
 				if (dealerVal == 2 || dealerVal == 7 || dealerVal == 8)
 					return Action::Stand;
 				return Action::Hit; // 9, 10, Ace
