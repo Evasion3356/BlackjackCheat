@@ -177,7 +177,7 @@ specifically because there was no automated check on it (see
 `BlackjackCheat_rounds.jsonl`, next to `BlackjackCheat.log`. It rolls over
 at 4 MB to `.1.jsonl`. Each round writes one `decision` line per advice shown
 and one `round` line at round end. The round line holds the deck, dealt
-seats, betting advice, final hands, won/lost, bankroll, and the dealer's
+seats, betting advice and the table's bet limits, final hands, won/lost, bankroll, and the dealer's
 predicted vs actual draw-out. To pin a real hand as a regression test, copy
 its line into `tests/fixtures/rounds.jsonl` and add `"expectBetting"`
 (`Max`/`Min`, optionally `"expectBettingNet"`/`"expectBetAmount"`),
@@ -344,8 +344,7 @@ untested live, all with the Debug build and the round log running:
 5. Play two rounds in one sitting and F11 -> "Probe Table Struct" in each:
    does the round-phase enum (`table.f_702`) go back to 2/3/7/8, or keep
    climbing?
-6. Bet limits (Session 20, static trace only): every round line logs
-   `tableMinBet`/`tableMaxBet` (`uLocal_14.f_10.f_4`/`f_5`). Check them
-   against the game's bet dial (lowest and highest bet it allows). If
-   they're wrong, the BET MAX/MIN amount is wrong; the Max/Min choice
-   itself doesn't use them.
+6. Bet limits (`uLocal_14.f_10.f_4`/`f_5`, logged as
+   `tableMinBet`/`tableMaxBet`) read 2/500 at the one table tested so far
+   and every advised amount paid out as predicted. Still unseen: a table
+   with different stakes, and a round where only a split wins.

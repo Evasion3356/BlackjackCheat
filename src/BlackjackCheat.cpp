@@ -820,7 +820,7 @@
 	AdvisePreDealBet() now returns the round's payout in half bets (a
 	natural's 3:2 included, splits now modelled too) and a bet: MAX when
 	it wins, MIN otherwise, with an amount from the bankroll and the
-	table's limits (uLocal_14.f_10.f_4/f_5, static trace only) -- half the
+	table's limits (uLocal_14.f_10.f_4/f_5, live-consistent) -- half the
 	bankroll when the winning line doubles or splits, so it stays
 	affordable. EstimateBettingConfidence() and the enum were removed.
 
@@ -902,7 +902,7 @@ namespace BlackjackCheat
 	// `uLocal_797 = 4` (f_756 + 27).
 	constexpr std::uint32_t kRootLocalIndex = 14;       // uLocal_14
 	constexpr std::uint32_t kMySeatField = 9;           // uLocal_14.f_9 -- the human's seat. CONFIRMED LIVE (Session 18: read 1 with the human at seat 1). Session 5 traced it via func_597's "is this the human seat" predicate.
-	constexpr std::uint32_t kBetLimitsField = 10;       // uLocal_14.f_10 -- the table's bet limits. Static trace only: func_225 (the betting state) passes &uLocal_14.f_10 with uLocal_14.f_9 as the seat to func_473/func_474, whose func_948 clamps the bet between f_4 and f_5 (each capped at the bankroll, rounded down to a multiple of f_4). Logged every round as tableMinBet/tableMaxBet.
+	constexpr std::uint32_t kBetLimitsField = 10;       // uLocal_14.f_10 -- the table's bet limits. LIVE-CONSISTENT (Session 20 third round log: read 2/500 every round, $0.02 and $5.00 bets accepted, and the advised bet's predicted net matched the real net in all 7 rounds, a double included). Traced: func_225 (the betting state) passes &uLocal_14.f_10 with uLocal_14.f_9 as the seat to func_473/func_474, whose func_948 clamps the bet between f_4 and f_5 (each capped at the bankroll, rounded down to a multiple of f_4). Logged every round as tableMinBet/tableMaxBet.
 	constexpr std::uint32_t kMinBetField = 4;           // f_10.f_4 -- minimum bet and bet step, in cents
 	constexpr std::uint32_t kMaxBetField = 5;           // f_10.f_5 -- maximum bet, in cents
 	constexpr std::uint32_t kDisplayedTableField = 17;  // uLocal_14.f_17 -- PRESENTATION copy of the table, see below
@@ -1021,7 +1021,7 @@ namespace BlackjackCheat
 	// Pinned to the absolute slots live testing confirmed (ProbeTableStruct/
 	// ProbeSeatHands logs, Sessions 6-18).
 	static_assert(MySeatLocal(nullptr).Index() == 23);
-	static_assert(BetLimitsLocal(nullptr).At(kMinBetField).Index() == 28 && BetLimitsLocal(nullptr).At(kMaxBetField).Index() == 29); // static trace only, not yet live-confirmed
+	static_assert(BetLimitsLocal(nullptr).At(kMinBetField).Index() == 28 && BetLimitsLocal(nullptr).At(kMaxBetField).Index() == 29); // bet limits, live-consistent (Session 20)
 	static_assert(DealerHandLocal(LiveTableLocal(nullptr)).At(kHandCardsField).Index() == 772);                  // dealer card array size word (`uLocal_772 = 11`)
 	static_assert(HandCardLocal(DealerHandLocal(LiveTableLocal(nullptr)), 0).Index() == 773);                    // dealer card 0
 	static_assert(SeatLocal(nullptr, 0).Index() == 798 && SeatLocal(nullptr, 1).Index() == 858 && SeatLocal(nullptr, 3).Index() == 978);
@@ -2114,8 +2114,8 @@ namespace BlackjackCheat
 						.Add("betAdvised", std::int64_t{ g_state.bettingAdvice.amount })
 						.Add("bettingPredictedNet", std::int64_t{ g_state.bettingAdvice.predictedNet });
 				}
-				// The bet limits (uLocal_14.f_10.f_4/f_5), static trace only
-				// -- check them against the game's own bet dial.
+				// The bet limits (uLocal_14.f_10.f_4/f_5), kept in the log so a
+				// fixture can replay the advised amount (expectBetAmount).
 				line.Add("tableMinBet", std::int64_t{ g_state.tableLimits.minBet })
 					.Add("tableMaxBet", std::int64_t{ g_state.tableLimits.maxBet });
 				// net: bankroll after the round minus bankroll before the bet

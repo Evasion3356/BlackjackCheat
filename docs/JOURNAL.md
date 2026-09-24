@@ -1891,3 +1891,16 @@ grade, and Medium (a win that needs a hit) was a Double win all 4 times
 **To confirm live:** check `tableMinBet`/`tableMaxBet` against the bet
 dial's real range, and that betting the advised amount on a Max-double
 round still offers Double.
+
+Follow-up, same session -- the third round log (7 rounds, seat 2, AI
+seats after mine in most) came back clean:
+- `tableMinBet`/`tableMaxBet` read 2/500 every round; bets of $0.02 and
+  $5.00 were accepted. Live-consistent, not proven to be the dial's
+  exact top.
+- Every round followed the advice and every `bettingPredictedNet`
+  equalled the real `net`: 4 Max rounds (+$3.00 all-in on a $3.00
+  bankroll, +$5.00, +$5.00, and a double for +$10.00) and 3 Min rounds
+  (-$0.02 each). All 7 dealer replays matched.
+- Two rounds pinned as fixtures with `expectBetAmount`: the double
+  (500, +4 half bets) and the first round, where a $3.00 bankroll caps
+  the Max bet at $3.00.
