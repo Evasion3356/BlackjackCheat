@@ -9,8 +9,13 @@
 // failures otherwise.
 
 #include "../src/BlackjackDeckSim.h"
+#include "../src/RoundRecord.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -25,9 +30,6 @@ namespace
 	using BlackjackDeckSim::EvaluateSplit;
 	using BlackjackDeckSim::PlayHandOut;
 	using BlackjackDeckSim::SplitDecision;
-	using BlackjackDeckSim::EvaluateBettingConfidence;
-	using BlackjackDeckSim::BettingAdvice;
-	using Confidence = BlackjackHandEval::BettingConfidence;
 
 	int g_failures = 0;
 
@@ -169,13 +171,14 @@ namespace
 		// The actual live bug: the user was NOT last to act that round --
 		// another occupied seat still had to play before the dealer, so
 		// the "dealer's next card" assumption above never held. This
-		// must now defer entirely to basic strategy instead of Stand --
-		// hard 9 vs a dealer up-card of 6 (dealerRanks[1], the real
-		// visible card) is a textbook Double (BlackjackHandEval.h,
-		// total==9 && dealerVal in [3,6]).
+		// must no longer trust the dealer simulation, and must never
+		// Stand. Basic strategy alone says Double (hard 9 vs up-card 6),
+		// but this hand's own next cards are still exact: doubling takes
+		// only the 6 (a weak 15), while two hits reach 9+6+4=19 -- so the
+		// fallback's own-card refinement demotes Double to Hit.
 		Action notLastSeat = DetermineCheatAction(player, 2, dealer, 2, future, 9, /*canDouble*/ true, false, /*isLastSeatBeforeDealer*/ false);
-		Check(notLastSeat == Action::Double, "the same hand with another seat still to act falls back to basic strategy, never Stand",
-			"a bust-proof hard 9 must never Stand when this function can't trust its own dealer simulation -- basic strategy vs dealer 6 says Double");
+		Check(notLastSeat == Action::Hit, "the same hand with another seat still to act never Stands, and doesn't Double into a known weak 15",
+			"the dealer simulation isn't trusted here, but this hand's own known cards are: Double stops at 15, two hits reach 19");
 
 		Action notLastSeatNoDouble = DetermineCheatAction(player, 2, dealer, 2, future, 9, /*canDouble*/ false, false, /*isLastSeatBeforeDealer*/ false);
 		Check(notLastSeatNoDouble == Action::Hit, "same fallback with canDouble=false is Hit, still never Stand",
@@ -246,8 +249,19 @@ namespace
 		SplitDecision decision = EvaluateSplit(player, 2, dealer, 2, future, 3, /*canDoubleAfterSplit*/ true, /*isLastSeatBeforeDealer*/ false);
 		Check(decision.trustworthy, "dealer already pat at 17 makes the split comparison trustworthy even with another seat still to act",
 			"the dealer never draws from here regardless of other seats, same rule DetermineCheatAction() already uses");
-		Check(decision.shouldSplit, "known upcoming cards make splitting these tens strictly more profitable than standing pat",
-			"21 + 19, both beating a dealer 17, is +2 bet units versus +1 for doubling the un-split pair to a lone winning 21");
+		// Split hands can't double (TestSplitHandsNeverDouble), so J,2
+		// hits the 7 for a single-unit 19: 21 + 19 is +2, the same as
+		// doubling the un-split pair into the Ace -- a tie, no split. (This
+		// used to expect +3 from doubling J,2, which the game never offers.)
+		Check(!decision.shouldSplit, "with doubling allowed, splitting these tens only ties doubling the pair into the Ace",
+			"21 + a hit-to-19 (+2) vs a doubled 21 (+2)");
+
+		// With doubling off, the un-split pair can only Hit its way to
+		// that 21 (+1), so splitting (+2) still wins -- the original live
+		// bug report's comparison.
+		SplitDecision noDouble = EvaluateSplit(player, 2, dealer, 2, future, 3, /*canDouble*/ false, /*isLastSeatBeforeDealer*/ false);
+		Check(noDouble.trustworthy && noDouble.shouldSplit, "the same split without doubling is still +2 versus +1",
+			"21 + 19 beats a single hit-to-21");
 	}
 
 	// Control for the above: same pair, but the known future cards don't
@@ -581,24 +595,44 @@ namespace
 			"A,10 + A,10 = two wins (+2) versus A,A,10,10's own best achievable hard 12, still a loss to 20 (-1)");
 	}
 
-	// Deck-derived Split, the Double-within-a-split-hand case: each new
-	// hand from splitting a pair of 5s gets a card that makes an
-	// ordinary 2-card 11, and the NEXT known card for each makes a
-	// winning 21 -- PlayHandOut() must recognize that as a Double (one
-	// card, then forced stand), not an open-ended Hit, exactly the same
-	// way DetermineCheatAction() already does for an un-split hand.
-	void TestSplitFivesDoublesWithinEachNewHand()
+	// A split hand can't double: the Double button (func_998) needs
+	// f_59 == 1, and func_1237 alone isn't what the player sees. Live
+	// bug: the mod advised Double on a split hand. 5,5 split vs a pat 19,
+	// each new hand gets a 6 (11) and then a 10 (21): still worth
+	// splitting, but each split hand hits into its 21, one unit each.
+	void TestSplitHandsNeverDouble()
 	{
-		std::printf("TestSplitFivesDoublesWithinEachNewHand:\n");
+		std::printf("TestSplitHandsNeverDouble:\n");
 
 		std::int32_t player[2] = { 5, 5 };
 		std::int32_t dealer[2] = { 10, 9 }; // already 19, stands pat
-		std::int32_t future[4] = { 6, 6, 10, 10 }; // hand 1 gets 6 (5,6=11) then doubles into the first 10 (21); hand 2 gets 6 (5,6=11) then doubles into the second 10 (21)
+		std::int32_t future[4] = { 6, 6, 10, 10 };
 
-		SplitDecision decision = EvaluateSplit(player, 2, dealer, 2, future, 4, /*canDoubleAfterSplit*/ true, /*isLastSeatBeforeDealer*/ false);
+		SplitDecision decision = EvaluateSplit(player, 2, dealer, 2, future, 4, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ false);
 		Check(decision.trustworthy, "dealer already pat at 19 is trustworthy regardless of other seats", "same rule as every other case");
-		Check(decision.shouldSplit, "splitting 5s and doubling each new hand into a 21 beats the un-split pair's own best line",
-			"two doubled 21s beating a 19 (+2) versus the un-split pair's own best achievable line with the same four cards (a losing 16, -1)");
+		Check(decision.shouldSplit, "splitting 5s into two hit-to-21 hands (+2) beats the un-split pair's losing 16 (-1)",
+			"5,5,6 = 16 loses; the split hands hit (not double) into their 10s");
+
+		Check(!BlackjackDeckSim::CanDouble(2, 2, 1000, 100), "CanDouble is false on a split hand even with 2 cards and the bankroll",
+			"func_998 requires f_59 == 1");
+		Check(BlackjackDeckSim::CanDouble(2, 1, 100, 100), "CanDouble on an unsplit 2-card hand with bankroll == bet", "func_998: f_1 >= f_4[0]");
+		Check(!BlackjackDeckSim::CanDouble(3, 1, 1000, 100), "CanDouble is false with 3 cards", "func_998: f_23 == 2");
+		Check(!BlackjackDeckSim::CanDouble(2, 1, 99, 100), "CanDouble is false when the bankroll can't cover the bet", "func_998: f_1 >= f_4[0]");
+
+		const std::int32_t pair[2] = { 8, 8 };
+		const std::int32_t nonPair[2] = { 13, 11 };
+		Check(BlackjackDeckSim::CanSplit(pair, 2, 1, 100, 100), "CanSplit on an unsplit pair", "func_997");
+		Check(!BlackjackDeckSim::CanSplit(nonPair, 2, 1, 100, 100), "CanSplit is false for K,J", "func_997 compares the ranks");
+		Check(!BlackjackDeckSim::CanSplit(pair, 2, 2, 100, 100), "CanSplit is false once split", "func_997: f_59 == 1");
+
+		// The live bug end to end: a split 5,6 (11), a known winning 10
+		// next, dealer pat at 19, flags from CanDouble()/CanSplit() the
+		// way the mod now builds them.
+		const std::int32_t splitHand[2] = { 5, 6 };
+		const std::int32_t next[1] = { 10 };
+		Action action = BlackjackDeckSim::DetermineFullAdvice(splitHand, 2, dealer, 2, next, 1,
+			BlackjackDeckSim::CanDouble(2, 2, 1000, 100), BlackjackDeckSim::CanSplit(splitHand, 2, 2, 1000, 100), false, true);
+		Check(action == Action::Hit, "a split 11 with a known winning 10 is Hit, not Double", "Double isn't offered after a split");
 	}
 
 	// Deck-derived Split isn't trustworthy with fewer than 2 known future
@@ -617,6 +651,74 @@ namespace
 			"both post-split hands need their own immediate card before any comparison is meaningful");
 	}
 
+	// Code-review fix: the fallback's known-card check used to look only
+	// one card ahead. Soft 16 (A,5) with known next cards 6 then 5: the 6
+	// alone makes a hard 12 (a "downgrade"), which forced Stand -- but the
+	// 5 after it makes 21. This hand's own hits are all exact even when
+	// the dealer simulation isn't trusted, so the fallback must look at
+	// every known stopping point, not just the first.
+	void TestFallbackLooksPastAKnownDowngradeToALaterImprovement()
+	{
+		std::printf("TestFallbackLooksPastAKnownDowngradeToALaterImprovement:\n");
+
+		std::int32_t player[2] = { 14, 5 }; // A,5 = soft 16
+		std::int32_t dealer[2] = { 2, 10 }; // 12, must hit -- dealer sim not trusted with another seat to act
+		std::int32_t future[3] = { 6, 5, 10 }; // A,5,6 = hard 12, then A,5,6,5 = 21, then a bust
+
+		Action action = DetermineCheatAction(player, 2, dealer, 2, future, 3, /*canDouble*/ true, false, /*isLastSeatBeforeDealer*/ false);
+		Check(action == Action::Hit, "soft 16 with known 6 then 5 is Hit, not Stand",
+			"A,5,6 is only a hard 12, but A,5,6,5 is 21 -- a later known card can redeem an early downgrade");
+
+		// Same hand, but the card after the downgrade busts: nothing known
+		// ever beats the current soft 16 (12 is exactly as weak as 16
+		// against a dealer that always finishes on 17+), so Stand.
+		std::int32_t futureNoHelp[2] = { 6, 10 }; // A,5,6 = 12, then 22
+		Action standAction = DetermineCheatAction(player, 2, dealer, 2, futureNoHelp, 2, true, false, false);
+		Check(standAction == Action::Stand, "soft 16 with known 6 then a bust card is Stand",
+			"no known stopping point beats the current hand, and the one after the downgrade busts");
+	}
+
+	// Code-review fix: a known improvement overrides a textbook Stand in
+	// the fallback too, not only a textbook Hit. Hard 13 vs dealer 6 is a
+	// textbook Stand, but a known 4 next makes 17, which is never worse
+	// than 13 against any dealer result and strictly better against 17.
+	void TestFallbackKnownImprovementOverridesTextbookStand()
+	{
+		std::printf("TestFallbackKnownImprovementOverridesTextbookStand:\n");
+
+		std::int32_t player[2] = { 10, 3 }; // hard 13
+		std::int32_t dealer[2] = { 10, 6 }; // 16, must hit -- up card 6
+		std::int32_t future[2] = { 4, 10 }; // 13+4=17, then a bust
+
+		BlackjackHandEval::Action textbook = BlackjackHandEval::GetBasicStrategyAction(player, 2, dealer[1], true, false, false);
+		Check(textbook == Action::Stand, "sanity check: textbook says Stand on hard 13 vs 6", "baseline this test overrides");
+
+		Action action = DetermineCheatAction(player, 2, dealer, 2, future, 2, /*canDouble*/ true, false, /*isLastSeatBeforeDealer*/ false);
+		Check(action == Action::Hit, "hard 13 vs 6 with a known 4 next is Hit in the fallback",
+			"17 is never worse than 13 against any dealer hand -- a known improvement dominates the textbook Stand");
+	}
+
+	// Code-review fix: EvaluateSplit() used to score every hand +/-1 even
+	// when it doubled. Split hands can't double any more (see
+	// TestSplitHandsNeverDouble), but the un-split line still can: 5,5 vs
+	// a dealer pat at 17, known cards 10, 10, 6, 5. Un-split, 5,5 doubles
+	// into the 10 for a winning 20 (+2). Split, 5,10 hits the 6 to 21 and
+	// 5,10 hits the 5 to 20: two single wins (+2), a tie, so no split.
+	// Scoring the double as +1 would split.
+	void TestSplitCountsADoubledHandAsTwoUnits()
+	{
+		std::printf("TestSplitCountsADoubledHandAsTwoUnits:\n");
+
+		std::int32_t player[2] = { 5, 5 };
+		std::int32_t dealer[2] = { 10, 7 }; // 17, stands pat
+		std::int32_t future[4] = { 10, 10, 6, 5 };
+
+		SplitDecision decision = EvaluateSplit(player, 2, dealer, 2, future, 4, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ false);
+		Check(decision.trustworthy, "dealer pat at 17 is trustworthy", "same short-circuit as every other split case");
+		Check(!decision.shouldSplit, "a doubled un-split win counts 2 units, so two single split wins only tie it",
+			"+2 (doubled 20) vs +1 +1; scoring the double as +1 would have split");
+	}
+
 	// SimulateDealerFromRanks() in isolation: dealer must keep drawing
 	// while under 17 and stop the instant it reaches 17+, consuming
 	// exactly as many future cards as needed and no more.
@@ -632,114 +734,149 @@ namespace
 			"15+2=17 should stop after exactly one draw, not keep drawing into the trailing 9s");
 	}
 
-	// Session 13 addition -- Betting Advice's deck-derived path
-	// (EstimateBettingConfidence()'s own non-deck-derived fallback is
-	// tested in tests/BlackjackHandEvalTests.cpp). A natural blackjack
-	// resolves immediately against the dealer's own already-dealt two
-	// cards -- exact and trustworthy regardless of isLastSeatBeforeDealer
-	// or the future deck, since neither side draws.
-	void TestBettingConfidenceNaturalBlackjackIsHigh()
+	// Betting advice. The round's result is known before the bet, so
+	// PlayMyRound() returns it as a payout in half bets (a natural's 3:2
+	// is +3) plus how many bets the line needs on the table, and
+	// AdvisePreDealBet() turns that into a bet: the most that still pays
+	// on a win, the least otherwise. Replaced Low/Medium/High, which
+	// ranked a won Double -- the best-paying line -- below a plain win:
+	// three Medium rounds of the second round log were double wins bet
+	// small, about $19 left on the table (see tests/fixtures/rounds.jsonl).
+	using BlackjackDeckSim::RoundPlan;
+	using BlackjackDeckSim::PlayMyRound;
+	using BlackjackDeckSim::TableLimits;
+	using BlackjackDeckSim::BetSize;
+	using BlackjackDeckSim::PreDealBet;
+	using BlackjackDeckSim::AdvisePreDealBet;
+
+	const BlackjackDeckSim::SeatsAfter kNoSeatsAfter{};
+
+	void TestRoundPlanNaturals()
 	{
-		std::printf("TestBettingConfidenceNaturalBlackjackIsHigh:\n");
+		std::printf("TestRoundPlanNaturals:\n");
 
-		std::int32_t player[2] = { 14, 10 }; // A,10 = natural 21
-		std::int32_t dealer[2] = { 2, 3 }; // 5, not a blackjack, still needs to hit
-		std::int32_t future[1] = { 0 }; // unused -- must never be read for this immediate case
+		const std::int32_t natural[2] = { 14, 10 };
+		const std::int32_t dealerFive[2] = { 2, 3 };
+		RoundPlan plan = PlayMyRound(natural, dealerFive, nullptr, 0, true, BlackjackDeckSim::SeatsAfter::Unknown());
+		Check(plan.exact && plan.natural && plan.netHalfUnits == 3 && plan.stakeUnits == 1, "a natural pays 3:2 (+3 half bets), exact even with seats unknown",
+			"nobody draws once a natural is dealt; func_1062 pays floor(2.5 * bet)");
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 0, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ false);
-		Check(advice.trustworthy, "a natural blackjack is trustworthy even with another seat still to act and a dealer that hasn't finished",
-			"neither side draws when the player already has blackjack -- it resolves against the dealer's own already-dealt two cards immediately");
-		Check(advice.outcome == Outcome::Win, "a natural blackjack against a non-blackjack dealer is a Win", "21 on the first two cards beats anything except a matching dealer blackjack");
-		Check(advice.confidence == Confidence::High, "a natural blackjack is always High confidence", "the strongest possible starting hand");
+		const std::int32_t dealerNatural[2] = { 14, 12 };
+		plan = PlayMyRound(natural, dealerNatural, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && !plan.natural && plan.netHalfUnits == 0, "natural vs natural pushes", "0, not a 3:2 win");
+
+		const std::int32_t hardEleven[2] = { 5, 6 };
+		const std::int32_t ten[1] = { 10 };
+		plan = PlayMyRound(hardEleven, dealerNatural, ten, 1, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == -2 && plan.stakeUnits == 1, "a dealer natural beats 11 even with a 10 next",
+			"the round ends at the deal -- I never get to draw the 10");
 	}
 
-	// Two natural blackjacks push -- Low confidence, not a Win.
-	void TestBettingConfidenceBothBlackjackIsPush()
+	void TestRoundPlanStandPatResults()
 	{
-		std::printf("TestBettingConfidenceBothBlackjackIsPush:\n");
+		std::printf("TestRoundPlanStandPatResults:\n");
 
-		std::int32_t player[2] = { 14, 10 };
-		std::int32_t dealer[2] = { 14, 12 }; // A,Q = also a natural 21
+		const std::int32_t nineteen[2] = { 10, 9 };
+		const std::int32_t eighteen[2] = { 10, 8 };
+		const std::int32_t dealerSeventeen[2] = { 10, 7 };
+		const std::int32_t dealerNineteen[2] = { 10, 9 };
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, nullptr, 0, true, false);
-		Check(advice.trustworthy, "both-blackjack is still an immediate, trustworthy resolution", "same short-circuit as the single-blackjack case");
-		Check(advice.outcome == Outcome::Push, "two natural blackjacks push", "neither side has a stronger 21 than the other");
-		Check(advice.confidence == Confidence::Low, "a push is Low confidence, not High, even off a natural blackjack", "a push doesn't favor betting more, regardless of how the hand got there");
+		RoundPlan plan = PlayMyRound(nineteen, dealerSeventeen, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 2 && plan.stakeUnits == 1, "19 vs a pat 17 wins one bet", "+2 half bets");
+		plan = PlayMyRound(nineteen, dealerNineteen, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 0, "19 vs 19 pushes", "0");
+		plan = PlayMyRound(eighteen, dealerNineteen, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == -2, "18 vs a pat 19 loses one bet", "-2 half bets");
+
+		const std::int32_t dealerFive[2] = { 2, 3 };
+		const std::int32_t five[1] = { 5 };
+		plan = PlayMyRound(nineteen, dealerFive, five, 1, true, BlackjackDeckSim::SeatsAfter::Unknown());
+		Check(!plan.exact, "a drawing dealer with unknown seats after mine isn't exact", "the caller shows no betting advice");
 	}
 
-	// Without a natural blackjack, the same dealerOutcomeTrustworthy
-	// precondition DetermineCheatAction()/EvaluateSplit() need applies
-	// here too -- a dealer that still needs to hit, with another seat
-	// still to act, means the future deck can't be trusted at all.
-	void TestBettingConfidenceNotTrustworthyWithoutBlackjack()
+	// Live round 6 of the second round log: Q,5 vs the dealer's 4,10
+	// (14), 6 then 10 next. Doubling makes 21 and the dealer busts on
+	// the 10 -- two bets won, and it was shown as Medium.
+	void TestRoundPlanDoubleWinIsTwoBets()
 	{
-		std::printf("TestBettingConfidenceNotTrustworthyWithoutBlackjack:\n");
+		std::printf("TestRoundPlanDoubleWinIsTwoBets:\n");
 
-		std::int32_t player[2] = { 10, 6 }; // hard 16, not blackjack
-		std::int32_t dealer[2] = { 2, 3 }; // 5, must hit
-		std::int32_t future[1] = { 5 };
+		const std::int32_t player[2] = { 12, 5 };
+		const std::int32_t dealer[2] = { 4, 10 };
+		const std::int32_t future[2] = { 6, 10 };
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 1, true, /*isLastSeatBeforeDealer*/ false);
-		Check(!advice.trustworthy, "a dealer that still needs to hit, with another seat still to act, can't be trusted",
-			"same precondition as DetermineCheatAction()/EvaluateSplit() -- the caller must fall back to the textbook heuristic instead");
+		RoundPlan plan = PlayMyRound(player, dealer, future, 2, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 4 && plan.stakeUnits == 2, "a won double is +4 half bets on two bets",
+			"double pays twice a plain win");
+
+		plan = PlayMyRound(player, dealer, future, 2, /*canAffordSecondBet*/ false, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 2 && plan.stakeUnits == 1, "without a second bet the same card is a plain hit win",
+			"hitting once draws the same 6 a double would");
 	}
 
-	// A win reached by simply standing on the hand as dealt (the dealer
-	// is already pat, so PlayHandOut() never needs to consume a future
-	// card) is High confidence -- the "blackjack/high probability of
-	// winning" case from the user's own description, even without an
-	// actual natural blackjack.
-	void TestBettingConfidenceStandPatWinIsHigh()
+	// 8,8 vs a pat 17 with 10, 10 next: unsplit it's 16, and hitting
+	// busts, so it loses; split, both hands make 18 and win.
+	void TestRoundPlanSplitWinIsTwoBets()
 	{
-		std::printf("TestBettingConfidenceStandPatWinIsHigh:\n");
+		std::printf("TestRoundPlanSplitWinIsTwoBets:\n");
 
-		std::int32_t player[2] = { 10, 9 }; // hard 19
-		std::int32_t dealer[2] = { 10, 7 }; // already 17, stands pat
+		const std::int32_t eights[2] = { 8, 8 };
+		const std::int32_t dealer[2] = { 10, 7 };
+		const std::int32_t future[2] = { 10, 10 };
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, nullptr, 0, true, false);
-		Check(advice.trustworthy, "a dealer already pat at 17 is trustworthy regardless of other seats", "same short-circuit DetermineCheatAction() itself already uses");
-		Check(advice.outcome == Outcome::Win, "hard 19 already beats a dealer pat at 17", "19 > 17, no draw needed on either side");
-		Check(advice.confidence == Confidence::High, "a win with no extra hits needed is High confidence", "the hand as already dealt already wins outright");
+		RoundPlan plan = PlayMyRound(eights, dealer, future, 2, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 4 && plan.stakeUnits == 2, "splitting 8,8 into two 18s wins two bets",
+			"the old betting advice never split, so it showed this round as a loss");
+
+		plan = PlayMyRound(eights, dealer, future, 2, /*canAffordSecondBet*/ false, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == -2 && plan.stakeUnits == 1, "without a second bet 8,8 can't split and loses",
+			"16 vs 17, and the 10 busts it");
 	}
 
-	// A win that only materializes by hitting/doubling into it is Medium
-	// -- exactly the user's own "could win it if the cards advance/double
-	// down on the right card" description. Reuses the same known-winning
-	// double scenario as TestKnownWinningCardIsDouble above (hard 11,
-	// known next card makes 21).
-	void TestBettingConfidenceWinViaDoubleIsMedium()
+	// Only my seat (0) dealt in: my 5,6, the dealer's 10,5, then 10, 3.
+	// I double into 21, the dealer draws the 3 to 18.
+	const bool kOnlySeatZero[4] = { true, false, false, false };
+	const std::int32_t kDoubleWinDeck[6] = { 5, 6, 10, 5, 10, 3 };
+
+	void TestBetAmountForADoubleWin()
 	{
-		std::printf("TestBettingConfidenceWinViaDoubleIsMedium:\n");
+		std::printf("TestBetAmountForADoubleWin:\n");
 
-		std::int32_t player[2] = { 5, 6 }; // hard 11
-		std::int32_t dealer[2] = { 10, 5 }; // 15, must hit
-		std::int32_t future[2] = { 10, 3 }; // player doubles into 21; dealer's own subsequent draw makes 18
+		const TableLimits limits{ 2, 500 };
+		PreDealBet bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 2000, limits);
+		Check(bet.size == BetSize::Max && bet.amount == 500 && bet.predictedNet == 1000, "a double win with a big bankroll bets the table max",
+			"$20.00 covers two $5.00 bets; the double wins $10.00");
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 2, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ true);
-		Check(advice.trustworthy, "last seat before the dealer makes this trustworthy", "same precondition as DetermineCheatAction()");
-		Check(advice.outcome == Outcome::Win, "doubling the known next card into 21 beats the dealer's resulting 18", "11+10=21 vs 15+3=18");
-		Check(advice.confidence == Confidence::Medium, "a win reached only by doubling into it is Medium, not High",
-			"the win only exists because of the known upcoming card, not the hand as already dealt -- \"could win it if the cards advance\"");
+		bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 590, limits);
+		Check(bet.size == BetSize::Max && bet.amount == 294 && bet.predictedNet == 588, "a double win bets half the bankroll when that's under the max",
+			"$5.90 bankroll: $2.94 (rounded down to the 2-cent step) still leaves the double; betting it all would forfeit it");
+
+		bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 3, limits);
+		Check(bet.size == BetSize::Max && bet.plan.stakeUnits == 1 && bet.amount == 2 && bet.predictedNet == 2,
+			"when two minimum bets aren't affordable the round is replayed without the double",
+			"3 cents can't cover 2 x 2 cents, so it's a plain hit win on one 2-cent bet");
+
+		bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 2000, TableLimits{});
+		Check(bet.size == BetSize::Max && bet.amount == -1, "unknown limits still say Max, with no amount", "the HUD shows just the label");
 	}
 
-	// Push and loss both bucket to Low -- neither favors betting more.
-	void TestBettingConfidencePushAndLossAreBothLow()
+	void TestBetAmountForLossesAndNaturals()
 	{
-		std::printf("TestBettingConfidencePushAndLossAreBothLow:\n");
+		std::printf("TestBetAmountForLossesAndNaturals:\n");
 
-		std::int32_t pushPlayer[2] = { 10, 9 }; // hard 19
-		std::int32_t pushDealer[2] = { 10, 9 }; // also 19, stands pat
-		BettingAdvice pushAdvice = EvaluateBettingConfidence(pushPlayer, 2, pushDealer, 2, nullptr, 0, true, false);
-		Check(pushAdvice.trustworthy, "dealer already pat is trustworthy regardless of other seats", "same short-circuit as every other pat-dealer case");
-		Check(pushAdvice.outcome == Outcome::Push, "identical stand-pat totals push", "19 vs 19");
-		Check(pushAdvice.confidence == Confidence::Low, "a push is Low confidence", "no reason to bet more on a hand that only ties");
+		const TableLimits limits{ 2, 500 };
+		const std::int32_t lossDeck[4] = { 10, 8, 10, 9 }; // 18 vs a pat 19
+		PreDealBet bet = AdvisePreDealBet(lossDeck, 4, kOnlySeatZero, 0, 2000, limits);
+		Check(bet.size == BetSize::Min && bet.amount == 2 && bet.predictedNet == -2, "a loss bets the minimum", "18 vs 19");
 
-		std::int32_t lossPlayer[2] = { 10, 8 }; // hard 18
-		std::int32_t lossDealer[2] = { 10, 9 }; // 19, stands pat, already beats 18
-		BettingAdvice lossAdvice = EvaluateBettingConfidence(lossPlayer, 2, lossDealer, 2, nullptr, 0, true, false);
-		Check(lossAdvice.trustworthy, "dealer already pat is trustworthy regardless of other seats", "same short-circuit as every other pat-dealer case");
-		Check(lossAdvice.outcome == Outcome::Loss, "hard 18 already loses to a dealer pat at 19", "18 < 19, and this hand's own best line (Stand) can't change that");
-		Check(lossAdvice.confidence == Confidence::Low, "a loss is Low confidence", "no reason to bet more on a hand that's already losing");
+		const std::int32_t pushDeck[4] = { 10, 9, 10, 9 };
+		bet = AdvisePreDealBet(pushDeck, 4, kOnlySeatZero, 0, 2000, limits);
+		Check(bet.size == BetSize::Min && bet.amount == 2 && bet.predictedNet == 0, "a push bets the minimum", "nothing to gain either way");
+
+		const std::int32_t naturalDeck[4] = { 14, 13, 10, 7 };
+		bet = AdvisePreDealBet(naturalDeck, 4, kOnlySeatZero, 0, 301, limits);
+		Check(bet.size == BetSize::Max && bet.amount == 300 && bet.predictedNet == 450, "a natural bets all it can, one bet",
+			"no double needed, so the whole (step-rounded) bankroll; pays floor(2.5 * 300) - 300 = 450");
 	}
 
 	void TestOutcomeRanking()
@@ -778,6 +915,330 @@ namespace
 		Check(CompareOutcome(naturalValue, naturalValue, /*playerNaturalCounts*/ false) == Outcome::Loss,
 			"a split two-card 21 loses to a dealer blackjack", "split hands can't have a natural");
 	}
+
+	// EvaluatePreDealBetting(): a lower seat dealt a natural never draws,
+	// so it doesn't make my own cards unknown. Live report: seat 0 A,K,
+	// me (seat 1) 9,Q = 19, seat 3 2,3, dealer K,10 = 20, Q next -- the
+	// exact answer is a loss (standing loses, hitting busts), but counting
+	// seat 0 as "draws first" fell back to the textbook estimate, Medium.
+	// Also recorded in tests/fixtures/rounds.jsonl; this pins the rule
+	// itself, with a control where seat 0 has no natural.
+	void TestPreDealBettingIgnoresALowerSeatNatural()
+	{
+		std::printf("TestPreDealBettingIgnoresALowerSeatNatural:\n");
+
+		const bool seatsDealt[4] = { true, true, false, true };
+		const std::int32_t deck[14] = { 14, 13, 9, 12, 2, 3, 13, 10, 12, 2, 3, 11, 6, 8 };
+		Check(BlackjackDeckSim::EvaluatePreDealBetting(deck, 14, seatsDealt, 1).netHalfUnits == -2,
+			"19 vs a dealer 20 with a Q next is a loss when the seat before mine has a natural",
+			"a natural never draws, so my own cards are exact -- stand loses, hit busts");
+
+		const std::int32_t deckNoNatural[14] = { 10, 6, 9, 12, 2, 3, 13, 10, 12, 2, 3, 11, 6, 8 };
+		Check(BlackjackDeckSim::EvaluatePreDealBetting(deckNoNatural, 14, seatsDealt, 1).netHalfUnits == 4,
+			"with a drawing seat before mine, the AI model plays it first: seat 0's 16 vs a 10 hits the Q and busts",
+			"then my 19 doubles on the known 2 to 21 and beats the dealer's 20 -- two bets won");
+	}
+
+	// func_623 transcription sanity: every row is empty (func_623's
+	// default) or exactly 13 columns (up cards 2..14) of H/S/D/P, and a
+	// few entries read straight off the decompile.
+	void TestAiTableMatchesFunc623()
+	{
+		std::printf("TestAiTableMatchesFunc623:\n");
+
+		bool shapeOk = true;
+		for (std::int32_t total = 0; total < 22; total++)
+		{
+			for (std::string_view row : { BlackjackDeckSim::detail::kAiHardTable[total], BlackjackDeckSim::detail::kAiPairTable[total] })
+			{
+				if (!row.empty() && (row.size() != 13 || row.find_first_not_of("HSDP") != std::string_view::npos))
+					shapeOk = false;
+			}
+		}
+		Check(shapeOk, "every AI table row is empty or 13 H/S/D/P columns", "a typo in the transcription");
+
+		using BlackjackDeckSim::AiTableAction;
+		Check(AiTableAction(16, 6, false) == Action::Stand, "AI hard 16 vs 6 stands", "func_623 case 6 / 16 -> 7");
+		Check(AiTableAction(16, 7, false) == Action::Hit, "AI hard 16 vs 7 hits", "func_623 case 7 / 16 -> 5");
+		Check(AiTableAction(12, 2, false) == Action::Hit && AiTableAction(12, 4, false) == Action::Stand, "AI hard 12 hits vs 2, stands vs 4", "func_623");
+		Check(AiTableAction(11, 13, false) == Action::Double && AiTableAction(11, 14, false) == Action::Hit, "AI 11 doubles vs K, hits vs A", "func_623");
+		Check(AiTableAction(9, 2, false) == Action::Hit && AiTableAction(9, 3, false) == Action::Double, "AI 9 hits vs 2, doubles vs 3", "func_623");
+		Check(AiTableAction(18, 9, true) == Action::Split && AiTableAction(18, 10, true) == Action::Stand, "AI 9,9 splits vs 9, stands vs 10", "func_623 pair branch");
+		Check(AiTableAction(8, 5, true) == Action::Split && AiTableAction(8, 4, true) == Action::Hit, "AI 4,4 splits vs 5 only (and 6)", "func_623 pair branch");
+		Check(AiTableAction(10, 9, true) == Action::Double, "AI 5,5 doubles vs 9", "func_623 pair branch, total 10");
+	}
+
+	// func_1002's overrides on top of the table.
+	void TestAiDecideOverrides()
+	{
+		std::printf("TestAiDecideOverrides:\n");
+
+		using BlackjackDeckSim::AiDecide;
+		const std::int32_t aces[2] = { 14, 14 };
+		Check(AiDecide(aces, 2, 10, 1, true) == Action::Split, "AI always splits Aces", "func_1002 checks 14,14 before the table");
+		Check(AiDecide(aces, 2, 10, 1, false) == Action::Hit, "AI Aces it can't afford to split play as a hard-table 12", "func_997(.., true) needs f_1 >= f_4[0]");
+
+		const std::int32_t eleven[2] = { 5, 6 };
+		const std::int32_t threeCardEleven[3] = { 2, 3, 6 };
+		Check(AiDecide(eleven, 2, 6, 1, true) == Action::Double, "AI 11 vs 6 doubles", "table D");
+		Check(AiDecide(eleven, 2, 6, 1, false) == Action::Hit, "AI Double drops to Hit when it can't cover the bet", "func_113 < func_492");
+		Check(AiDecide(eleven, 2, 6, 2, true) == Action::Hit, "AI never doubles after a split", "f_59 > 1");
+		Check(AiDecide(threeCardEleven, 3, 6, 1, true) == Action::Hit, "AI never doubles on 3 cards", "f_23 > 2");
+
+		const std::int32_t soft18[2] = { 14, 7 };
+		Check(AiDecide(soft18, 2, 10, 1, true) == Action::Stand, "AI soft 18 stands even vs 10", "func_623 only sees the total (func_645)");
+	}
+
+	// The live round 5 shape: an AI seat after mine hits first, so the
+	// dealer draws a different card. SimulateSeatsThenDealer() must play
+	// the seats before the dealer, in seat order.
+	void TestSeatsAfterDrawBeforeTheDealer()
+	{
+		std::printf("TestSeatsAfterDrawBeforeTheDealer:\n");
+
+		const std::int32_t dealer[2] = { 8, 6 }; // hole 8, up 6: 14
+		BlackjackDeckSim::SeatsAfter after;
+		const std::int32_t seat1[2] = { 4, 2 };
+		const std::int32_t seat3[2] = { 3, 10 };
+		after.Add(seat1, 2, true);
+		after.Add(seat3, 2, true);
+		const std::int32_t future[4] = { 13, 6, 4, 5 };
+
+		BlackjackDeckSim::DealerSimResult result = BlackjackDeckSim::SimulateSeatsThenDealer(dealer, 2, after, future, 4);
+		Check(result.value.total == 20, "seat 1's 6 vs 6 hits the K and stands on 16, seat 3's 13 stands, dealer takes the 6 for 20",
+			"the recorded dealer hand was 8D 6H 6D");
+
+		// Session 9's hard-9 bug, now answered exactly: me 5,4 vs a dealer
+		// 16 (10,6); one AI seat after me with 2,3. Standing: the AI takes
+		// the 10 (15, stands vs 6), dealer takes the 5 for 21 -- loss.
+		// Doubling: I take the 10 (19), the AI takes 5 then 9 (19), dealer
+		// takes the 2 for 18 -- win. Treating the seat as absent (the old
+		// "last seat" answer) would stand, betting the dealer busts on the 10.
+		const std::int32_t me[2] = { 5, 4 };
+		const std::int32_t dealer16[2] = { 10, 6 };
+		const std::int32_t lowSeat[2] = { 2, 3 };
+		BlackjackDeckSim::SeatsAfter one;
+		one.Add(lowSeat, 2, true);
+		const std::int32_t cards[5] = { 10, 5, 9, 2, 10 };
+		Check(DetermineCheatAction(me, 2, dealer16, 2, cards, 5, true, false, one) == Action::Double,
+			"9 vs 16 doubles once the AI seat after me is modeled", "stand loses to 21; double wins 19 vs 18");
+		Check(DetermineCheatAction(me, 2, dealer16, 2, cards, 5, true, false, /*isLastSeatBeforeDealer*/ true) == Action::Stand,
+			"control: ignoring the AI seat stands on 9", "the dealer would bust on the 10 only if nobody else drew it");
+	}
+
+	std::string_view ActionName(Action action)
+	{
+		switch (action)
+		{
+			case Action::Hit: return "Hit";
+			case Action::Double: return "Double";
+			case Action::Split: return "Split";
+			default: return "Stand";
+		}
+	}
+
+	// Replays tests/fixtures/rounds.jsonl -- lines copied out of the mod's
+	// BlackjackCheat_rounds.jsonl round log (Debug build) with an
+	// "expectBetting" (round lines) or "expectAction" (decision lines) key
+	// added by hand. Each line goes through the exact pure function the
+	// mod ran: AdvisePreDealBet() / DetermineFullAdvice(). See
+	// src/RoundRecord.h for the format. Lines without an expect* key, and
+	// blank or '#' lines, are skipped.
+	void TestRecordedRounds()
+	{
+		std::printf("TestRecordedRounds:\n");
+
+		const std::filesystem::path candidates[] = {
+			std::filesystem::path(__FILE__).parent_path() / "fixtures" / "rounds.jsonl",
+			std::filesystem::path("tests") / "fixtures" / "rounds.jsonl",
+		};
+		std::ifstream file;
+		for (const std::filesystem::path& candidate : candidates)
+		{
+			file.open(candidate);
+			if (file)
+				break;
+			file.clear();
+		}
+		if (!file)
+		{
+			Check(false, "tests/fixtures/rounds.jsonl opens", "run from the BlackjackCheat directory");
+			return;
+		}
+
+		std::int32_t checked = 0;
+		std::int32_t lineNumber = 0;
+		std::string line;
+		while (std::getline(file, line))
+		{
+			lineNumber++;
+			if (line.empty() || line[0] == '#')
+				continue;
+
+			std::string type;
+			std::string id;
+			std::string note;
+			RoundRecord::GetString(line, "type", type);
+			if (!RoundRecord::GetString(line, "id", id))
+				RoundRecord::GetString(line, "round", id);
+			RoundRecord::GetString(line, "note", note);
+			const std::string name = "rounds.jsonl:" + std::to_string(lineNumber) + " " + type + " " + id + (note.empty() ? "" : " -- " + note);
+
+			if (type == "round")
+			{
+				std::string expect;
+				std::vector<std::int32_t> expectDealer;
+				const bool hasBetting = RoundRecord::GetString(line, "expectBetting", expect);
+				const bool hasDealer = RoundRecord::GetIntArray(line, "expectDealer", expectDealer);
+				if (!hasBetting && !hasDealer)
+					continue;
+
+				std::int32_t mySeat = -1;
+				std::vector<std::int32_t> seats;
+				std::vector<std::int32_t> deck;
+				if (!RoundRecord::GetInt(line, "mySeat", mySeat) || !RoundRecord::GetIntArray(line, "seatsDealt", seats)
+					|| !RoundRecord::GetIntArray(line, "deckRanks", deck) || seats.size() != 4)
+				{
+					Check(false, name.c_str(), "needs mySeat, seatsDealt (4 entries) and deckRanks");
+					continue;
+				}
+
+				bool seatsDealt[4] = {};
+				for (std::size_t i = 0; i < 4; i++)
+					seatsDealt[i] = seats[i] != 0;
+
+				// expectBetting: Max/Min. Optional expectBettingNet (the plan's
+				// half bets) and expectBetAmount (cents, needs the line's
+				// bankrollBeforeRound, tableMinBet and tableMaxBet).
+				if (hasBetting)
+				{
+					std::int32_t bankroll = -1;
+					BlackjackDeckSim::TableLimits limits;
+					RoundRecord::GetInt(line, "bankrollBeforeRound", bankroll);
+					RoundRecord::GetInt(line, "tableMinBet", limits.minBet);
+					RoundRecord::GetInt(line, "tableMaxBet", limits.maxBet);
+					const BlackjackDeckSim::PreDealBet bet = BlackjackDeckSim::AdvisePreDealBet(deck.data(), static_cast<std::int32_t>(deck.size()), seatsDealt, mySeat, bankroll, limits);
+
+					std::string_view got = bet.plan.exact ? BlackjackDeckSim::BetSizeName(bet.size) : "none";
+					std::string detail = "expected betting " + expect + ", got " + std::string(got);
+					Check(got == expect, (name + " [betting]").c_str(), detail.c_str());
+					checked++;
+
+					std::int32_t expectNet = 0;
+					if (RoundRecord::GetInt(line, "expectBettingNet", expectNet))
+					{
+						detail = "expected " + std::to_string(expectNet) + " half bets, got " + std::to_string(bet.plan.netHalfUnits);
+						Check(bet.plan.netHalfUnits == expectNet, (name + " [betting net]").c_str(), detail.c_str());
+						checked++;
+					}
+
+					std::int32_t expectAmount = 0;
+					if (RoundRecord::GetInt(line, "expectBetAmount", expectAmount))
+					{
+						detail = "expected a bet of " + std::to_string(expectAmount) + " cents, got " + std::to_string(bet.amount);
+						Check(bet.amount == expectAmount, (name + " [bet amount]").c_str(), detail.c_str());
+						checked++;
+					}
+				}
+
+				// expectDealer: the dealer's real final ranks. ReplayDealer()
+				// plays the AI seats off the deck with my seat taking
+				// myCardsDrawn cards, the same replay the mod logs.
+				if (hasDealer)
+				{
+					std::int32_t myCardsDrawn = 0;
+					if (!RoundRecord::GetInt(line, "myCardsDrawn", myCardsDrawn))
+					{
+						Check(false, name.c_str(), "expectDealer needs myCardsDrawn");
+						continue;
+					}
+					BlackjackDeckSim::ReplayedDealer replayed = BlackjackDeckSim::ReplayDealer(deck.data(), static_cast<std::int32_t>(deck.size()), seatsDealt, mySeat, myCardsDrawn);
+					std::string got;
+					for (std::int32_t i = 0; i < replayed.count; i++)
+						got += (i ? "," : "") + std::to_string(replayed.ranks[i]);
+					std::string want;
+					for (std::size_t i = 0; i < expectDealer.size(); i++)
+						want += (i ? "," : "") + std::to_string(expectDealer[i]);
+					const std::string detail = "expected dealer [" + want + "], replayed [" + got + "]";
+					Check(replayed.valid && got == want, (name + " [dealer replay]").c_str(), detail.c_str());
+					checked++;
+				}
+			}
+			else if (type == "decision")
+			{
+				std::string expect;
+				if (!RoundRecord::GetString(line, "expectAction", expect))
+					continue;
+
+				std::vector<std::int32_t> player;
+				std::vector<std::int32_t> dealer;
+				std::vector<std::int32_t> future;
+				bool canDouble = false;
+				bool canSplit = false;
+				bool isSplitAceHand = false;
+				if (!RoundRecord::GetIntArray(line, "playerRanks", player) || !RoundRecord::GetIntArray(line, "dealerRanks", dealer)
+					|| !RoundRecord::GetIntArray(line, "futureRanks", future) || !RoundRecord::GetBool(line, "canDouble", canDouble)
+					|| !RoundRecord::GetBool(line, "canSplit", canSplit) || !RoundRecord::GetBool(line, "isSplitAceHand", isSplitAceHand)
+					|| player.empty() || dealer.empty())
+				{
+					Check(false, name.c_str(), "needs playerRanks, dealerRanks, futureRanks and the three flags");
+					continue;
+				}
+
+				// The seats after mine: seatsAfter* (current format) or the
+				// older isLastBeforeDealer flag.
+				BlackjackDeckSim::SeatsAfter after;
+				bool isLast = false;
+				bool afterKnown = true;
+				std::vector<std::int32_t> afterRanks;
+				std::vector<std::int32_t> afterCounts;
+				std::vector<std::int32_t> afterCanAfford;
+				if (RoundRecord::GetBool(line, "seatsAfterKnown", afterKnown))
+				{
+					RoundRecord::GetIntArray(line, "seatsAfterRanks", afterRanks);
+					RoundRecord::GetIntArray(line, "seatsAfterCounts", afterCounts);
+					RoundRecord::GetIntArray(line, "seatsAfterCanAfford", afterCanAfford);
+					std::size_t offset = 0;
+					bool shapeOk = afterCanAfford.size() == afterCounts.size();
+					for (std::size_t i = 0; shapeOk && i < afterCounts.size(); i++)
+					{
+						shapeOk = afterCounts[i] > 0 && offset + afterCounts[i] <= afterRanks.size();
+						if (shapeOk)
+							after.Add(afterRanks.data() + offset, afterCounts[i], afterCanAfford[i] != 0);
+						offset += afterCounts[i];
+					}
+					if (!shapeOk)
+					{
+						Check(false, name.c_str(), "seatsAfterCounts/seatsAfterCanAfford don't match seatsAfterRanks");
+						continue;
+					}
+					after.known = after.known && afterKnown;
+				}
+				else if (RoundRecord::GetBool(line, "isLastBeforeDealer", isLast))
+				{
+					after = BlackjackDeckSim::SeatsAfterFromFlag(isLast);
+				}
+				else
+				{
+					Check(false, name.c_str(), "needs seatsAfterKnown (+ seatsAfterRanks/Counts/CanAfford) or isLastBeforeDealer");
+					continue;
+				}
+
+				std::string_view got = ActionName(BlackjackDeckSim::DetermineFullAdvice(
+					player.data(), static_cast<std::int32_t>(player.size()), dealer.data(), static_cast<std::int32_t>(dealer.size()),
+					future.data(), static_cast<std::int32_t>(future.size()), canDouble, canSplit, isSplitAceHand, after));
+				const std::string detail = "expected action " + expect + ", got " + std::string(got);
+				Check(got == expect, name.c_str(), detail.c_str());
+				checked++;
+			}
+			else
+			{
+				Check(false, name.c_str(), "unknown \"type\" -- expected round or decision");
+			}
+		}
+
+		Check(checked > 0, "rounds.jsonl has at least one expect* line", "an empty fixture file would silently test nothing");
+	}
 }
 
 int main()
@@ -807,17 +1268,25 @@ int main()
 	TestFallbackWithNoFutureCardsIsSafe();
 	TestSplitEightsRejectedWhenKnownCardsMakeItWorse();
 	TestSplitAcesForcedStandStillBeatsTheUnsplitAlternative();
-	TestSplitFivesDoublesWithinEachNewHand();
+	TestSplitHandsNeverDouble();
 	TestSplitNotTrustworthyWithTooFewFutureCards();
+	TestFallbackLooksPastAKnownDowngradeToALaterImprovement();
+	TestFallbackKnownImprovementOverridesTextbookStand();
+	TestSplitCountsADoubledHandAsTwoUnits();
 	TestDealerSimulationStopsAtSeventeen();
-	TestBettingConfidenceNaturalBlackjackIsHigh();
-	TestBettingConfidenceBothBlackjackIsPush();
-	TestBettingConfidenceNotTrustworthyWithoutBlackjack();
-	TestBettingConfidenceStandPatWinIsHigh();
-	TestBettingConfidenceWinViaDoubleIsMedium();
-	TestBettingConfidencePushAndLossAreBothLow();
+	TestRoundPlanNaturals();
+	TestRoundPlanStandPatResults();
+	TestRoundPlanDoubleWinIsTwoBets();
+	TestRoundPlanSplitWinIsTwoBets();
+	TestBetAmountForADoubleWin();
+	TestBetAmountForLossesAndNaturals();
 	TestOutcomeRanking();
 	TestNaturalsBeatThreeCardTwentyOne();
+	TestPreDealBettingIgnoresALowerSeatNatural();
+	TestAiTableMatchesFunc623();
+	TestAiDecideOverrides();
+	TestSeatsAfterDrawBeforeTheDealer();
+	TestRecordedRounds();
 
 	if (g_failures == 0)
 	{

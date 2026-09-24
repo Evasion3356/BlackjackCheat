@@ -1735,3 +1735,172 @@ step reached if opening the log file is what crashes. Not yet run in-game.
 on disk only because the folder had no version control at the time. It
 does now, so they are deleted (plus the stale `ClInclude` in
 `BlackjackCheat.vcxproj`), recoverable from git history.
+
+## Session 18 -- code review fixes
+
+A full code review found, and this session fixed (see `docs/CHANGELOG.md`
+[Unreleased] and each fix's own "Code-review" comment in the source):
+
+- **Bet offset (`kSeatBetOffset` 4 -> 5), CONFIRMED LIVE** (see the
+  live result below).
+  `seat.f_4[h]` is a script array, and a YSC array's first word is its
+  element count, so `f_4` itself is the size word (2) and `bet[h]` is at
+  `f_4 + 1 + h`. Evidence: Session 9's raw dump table logged `f_4[0] = 2`
+  for all three seats, including the human seat before it had confirmed a
+  bet; and size + 2 bets = `f_4..f_6` ends right before the live-confirmed
+  bet-lock flag at `f_7`. The old read made `canDouble` reduce to
+  `bankroll >= 2`. **To confirm:** bet something other than $2, run
+  F11 -> Probe Seat Hands, and check that `bet(f_4[0])` shows the real bet
+  and `betArraySizeWord(f_4)` shows 2.
+- **Turn gating relies on `seat.f_3` (static trace only).** Advice now
+  requires every occupied lower seat to read `f_3 >= f_59` and my own
+  `f_3 < f_59`. If `f_3` doesn't behave as traced, advice will never
+  appear, which is easy to spot. The Debug panel now has a
+  "Turn f_3/f_59" line showing each seat's values: expect `-1/1` while a
+  seat waits (reset at round start), `0/1` while it acts, and `1/1` once
+  it's done (`2/2` after a split). "Not done" is `f_3 < f_59`, the same
+  test `func_1063` uses for the table's case-4 "next seat to play" scan
+  (Session 5), so every seat the table plays -- naturals included --
+  reaches `f_3 == f_59` before the dealer's turn.
+- The insurance window is inferred from the deck cursor still sitting
+  exactly at the end of the initial deal (2 cards per dealt seat + 2 for
+  the dealer), and by my seat's `f_3` still reading -1: insurance is
+  state 2 of the table state machine, before state 4 sets the acting
+  seat's `f_3` from -1 to 0 (the first version of this check required
+  `f_3 == 0` and so could never fire). If insurance ever fails to show
+  at the real prompt, check the cursor at that moment with Probe Table
+  Struct.
+- `tests/BlackjackHandEvalTests.cpp`'s "hard 11 with 3 cards" case had
+  been passing `count=3` with a 2-element array (out of bounds), which
+  passed under MSVC by luck and failed under g++. Fixed with a real 3-card
+  hand.
+- Considered and rejected: preferring the fewest hits among winning
+  candidates in `DetermineCheatAction()`. See `BlackjackDeckSim.h`'s
+  header comment (code-review addendum, item 2).
+
+**Live result (after the fixes).** ProbeSeatHands with a $250 bet:
+`seat 1 hand 0 ... bet(f_4[0], slot 863)=250 betArraySizeWord(f_4)=2`
+(NPC seat 0: bet 4, size word 2). The bet offset is confirmed. The same
+log had `mySeat (ped-array)=-1, f_9=1` with the human at seat 1: `f_9`
+is right and `FindMySeatByPed()` is wrong (unknown why -- stale ped
+array offset or handle encoding). `DrawOverlay()` already reads `f_9`
+first and only falls back to the ped array when `f_9` is out of range,
+so advice picked the right seat; the Probe labels now say which one to
+trust.
+
+## Session 19 -- AI seat model, no double after split, round-log replay
+
+The first round log (`BlackjackCheat_rounds.jsonl`, 5 rounds, me at
+seat 0 with AI seats after me every round) showed the deck engine
+trusted in only 2 of 5 rounds: every decision line had
+`isLastBeforeDealer:false`, so whenever the dealer still had to draw,
+play advice fell back to basic strategy and betting advice to the
+textbook estimate. Round 5 (18 vs 8,6) was a sure loss shown as Medium.
+
+- **AI seats modeled (`BlackjackDeckSim.h`).** `func_1002` -> `func_623`
+  is now ported: `func_623`'s table (dealer up card 2..14 x hand total,
+  plus the pair branch) was transcribed with a script into
+  `kAiHardTable`/`kAiPairTable`, with `func_1002`'s overrides (Aces always
+  split; Double drops to Hit on 3+ cards, a short bankroll, or after a
+  split). `SeatsAfter` replaces the `isLastSeatBeforeDealer` bool: the
+  seats still to act after my hand are played before the dealer draws.
+  Bool overloads remain for old tests/fixtures. Pre-deal betting now
+  plays every seat (before and after mine) off the deck.
+- **The AI keys on the dealer's VISIBLE card (`dealerRanks[1]`)**, even
+  though `func_1002` reads `Table.f_2[0]`. Rounds 4 and 5 only replay
+  that way (round 5: seat 1 stood on 16, which the table only does vs a
+  6, the up card; the hole card was an 8). Likely the dealer-hand copy
+  the mod reads and `Table.f_2` differ in order -- not chased further.
+- **No double after split.** The Double prompt (`func_600`) needs
+  `func_998`, which requires `f_59 == 1`; `func_1237` alone would allow
+  it, which is where the old assumption came from. `CanDouble()`/
+  `CanSplit()` mirror `func_998`/`func_997`, and split hands inside
+  `EvaluateSplit()` never double. User report: Double advised after a
+  split. Two tests that asserted doubling within split hands were
+  corrected.
+- **Round log `dealerPredicted`** is now `ReplayDealer()`: deal the deck,
+  AI seats by the model, my seat as the cards it actually drew
+  (`myCardsDrawn`), then the dealer. The old value was the deal-time
+  "nobody draws" snapshot and mismatched whenever anyone hit. All 5
+  logged rounds replay to the real dealer hand (fixture `expectDealer`).
+  Decision lines now log `seatsAfter*` instead of `isLastBeforeDealer`.
+- `liveLastDealer` never shows the dealer's draws. That's expected: the
+  draw-out happens in the same tick as the live reset.
+
+**To confirm live:** play rounds with AI seats and check every round
+line has `"dealerPredictionMatch":true`. A split by an AI seat hasn't
+been seen yet: the split dealing order is assumed to match mine.
+
+Follow-up, same session:
+- **Money is in cents.** Bankroll/bet (`seat.f_1`, `seat.f_4[h]`) read
+  300 for $3.00. The field comments now say so. Older journal entries
+  that say "$250 bet" etc. mean 250 cents.
+- **Decision lines log `taken`/`followedAdvice`.** Live ticks after a
+  decision resolve what I did: a second hand is Split, a new card is a Hit
+  (a Double if `f_4[h]` grew), and `f_3` moving past the hand is Stand.
+  When my action is the last one before the dealer, it lands in the
+  live-reset tick, so `ResolvePendingAtEnd()` infers it from the final
+  hand and net. First test (user doubled A,9 vs A,6 against Stand
+  advice) was before this existed. Unconfirmed: whether a Double's bet
+  update lands in the same tick as its card (if not, it logs as Hit).
+
+## Session 20 -- betting advice becomes Max/Min with an amount
+
+The second round log (14 rounds, seat 3, 17 decisions) was all correct:
+every play matched a brute-force search over the deck, every
+`dealerPredictionMatch` was true, and every Low was a loss/push and every
+Medium/High a win. The problem was the scale itself. With the AI seats
+modelled the round is exact before the bet, so there's no confidence to
+grade, and Medium (a win that needs a hit) was a Double win all 4 times
+-- the best-paying round -- which the user bet small on: rounds 6, 11 and
+13 won $6.36 instead of about $25.90.
+
+- **`PlayMyRound()` / `EvaluatePreDealBetting()`** return a `RoundPlan`:
+  the round's payout in half bets (natural +3, since `func_1062` pays
+  `floor(2.5 * bet)`; win +2; won double or two won split hands +4; push
+  0; loss -2) and `stakeUnits` (2 when the line doubles or splits; no
+  double after a split, so never more). The pre-deal play-out now splits
+  when `EvaluateSplit()` would (`SplitDecision` exposes `splitValue`/
+  `noSplitValue`); before, a pair that only wins by splitting showed Low.
+  Either natural ends the round with nobody drawing.
+- **`AdvisePreDealBet()`**: Max when the payout is positive, else Min.
+  Amount: Min = the table minimum; Max = min(bankroll / stakeUnits, max),
+  rounded down to the minimum (the bet step, per `func_948`). Half the
+  bankroll keeps the double/split affordable (`func_1237`'s `f_1 >=
+  f_4[h]`); 2 x half always beats 1 x all. When even two minimum bets
+  aren't affordable the round is replayed without Double/Split.
+- **Bet limits: `uLocal_14.f_10.f_4` (min/step) and `f_5` (max). Static
+  trace only.** `func_225` (the betting state, registered via
+  `func_224(uParam0, 2, &func_225)`) passes `&uParam1->f_10` with
+  `uParam1->f_9` as the seat, and `f_9` is `kMySeatField`, so `uParam1`
+  is `uLocal_14`. `func_948` sets the dial's range to
+  `min(bankroll, f_4)`..`min(bankroll, f_5)`, each rounded down to a
+  multiple of `f_4`. Slots 28/29. The log's bets were all multiples of
+  2 cents and went up to $5.00, consistent with 2/500 but not proof.
+  Round lines now log `tableMinBet`/`tableMaxBet`, plus `bettingNet`,
+  `bettingStake`, `betAdvised` and `bettingPredictedNet`.
+- **HUD**: "BET MAX $2.94 (+$5.88)" green / "BET MIN $0.02" red; just the
+  label if the limits read as unset; nothing if the deck can't settle
+  the round (only when the deal itself can't be read).
+  `EstimateBettingConfidence()`, `BettingConfidence` and their tests were
+  removed; the Localization table is now `kBetSizeLabels`.
+- Fixtures: old `expectBetting` values mapped High/Medium -> Max, Low ->
+  Min; rounds 6, 11 and 13 of this log added with
+  `"expectBettingNet":4`.
+
+**To confirm live:** check `tableMinBet`/`tableMaxBet` against the bet
+dial's real range, and that betting the advised amount on a Max-double
+round still offers Double.
+
+Follow-up, same session -- the third round log (7 rounds, seat 2, AI
+seats after mine in most) came back clean:
+- `tableMinBet`/`tableMaxBet` read 2/500 every round; bets of $0.02 and
+  $5.00 were accepted. Live-consistent, not proven to be the dial's
+  exact top.
+- Every round followed the advice and every `bettingPredictedNet`
+  equalled the real `net`: 4 Max rounds (+$3.00 all-in on a $3.00
+  bankroll, +$5.00, +$5.00, and a double for +$10.00) and 3 Min rounds
+  (-$0.02 each). All 7 dealer replays matched.
+- Two rounds pinned as fixtures with `expectBetAmount`: the double
+  (500, +4 half bets) and the first round, where a $3.00 bankroll caps
+  the Max bet at $3.00.

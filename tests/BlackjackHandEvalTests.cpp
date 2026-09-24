@@ -20,8 +20,6 @@ namespace
 	using BlackjackHandEval::HandValue;
 	using BlackjackHandEval::EvaluateHand;
 	using BlackjackHandEval::GetBasicStrategyAction;
-	using BlackjackHandEval::EstimateBettingConfidence;
-	using Confidence = BlackjackHandEval::BettingConfidence;
 	using Action = BlackjackHandEval::Action;
 
 	int g_failures = 0;
@@ -88,7 +86,11 @@ namespace
 		std::int32_t hand11[2] = { 6, 5 }; // hard 11
 		Check(GetBasicStrategyAction(hand11, 2, 6, true, true) == Action::Double, "hard 11 vs dealer 6 is Double", "11 doubles against every upcard except Ace");
 		Check(GetBasicStrategyAction(hand11, 2, 14, true, true) == Action::Hit, "hard 11 vs dealer Ace is Hit", "11 vs Ace is the one exception to always-double");
-		Check(GetBasicStrategyAction(hand11, 3, 6, false, true) == Action::Hit, "hard 11 with 3 cards falls back to Hit", "double isn't legal past the first two cards");
+		// A real 3-card array -- this case used to pass count=3 with the 2-card
+		// hand11 array above, reading one element past its end (undefined
+		// behavior that happened to pass under MSVC and failed under g++).
+		std::int32_t hand11ThreeCards[3] = { 2, 4, 5 }; // hard 11
+		Check(GetBasicStrategyAction(hand11ThreeCards, 3, 6, false, true) == Action::Hit, "hard 11 with 3 cards falls back to Hit", "double isn't legal past the first two cards");
 
 		std::int32_t hand12[2] = { 10, 2 }; // hard 12
 		Check(GetBasicStrategyAction(hand12, 2, 4, true, true) == Action::Stand, "hard 12 vs dealer 4 is Stand", "12 stands only against 4-6");
@@ -107,6 +109,23 @@ namespace
 		std::int32_t soft13[2] = { 14, 2 }; // A,2
 		Check(GetBasicStrategyAction(soft13, 2, 5, true, true) == Action::Double, "soft 13 vs dealer 5 is Double", "A2 only doubles against 5-6");
 		Check(GetBasicStrategyAction(soft13, 2, 9, true, true) == Action::Hit, "soft 13 vs dealer 9 is Hit", "A2 vs a strong dealer card is just Hit");
+
+		// Soft 18 vs 3-6 is "double, else STAND" -- when doubling isn't
+		// legal it must not fall through to the Hit reserved for 9/10/Ace.
+		Check(GetBasicStrategyAction(soft18, 2, 5, false, true) == Action::Stand, "soft 18 vs dealer 5 without double is Stand", "A7 vs 3-6 is double-else-stand, not double-else-hit");
+		std::int32_t soft18ThreeCards[3] = { 14, 2, 5 }; // A,2,5 = soft 18
+		Check(GetBasicStrategyAction(soft18ThreeCards, 3, 4, true, false) == Action::Stand, "3-card soft 18 vs dealer 4 is Stand", "double isn't legal on 3 cards, so soft 18 vs 3-6 stands");
+		Check(GetBasicStrategyAction(soft18ThreeCards, 3, 10, true, false) == Action::Hit, "3-card soft 18 vs dealer 10 is still Hit", "the 9/10/Ace Hit is unaffected by the double-else-stand fix");
+
+		// Soft 17 vs 3-6 is "double, else HIT" -- unlike soft 18.
+		std::int32_t soft17[2] = { 14, 6 }; // A,6
+		Check(GetBasicStrategyAction(soft17, 2, 5, false, false) == Action::Hit, "soft 17 vs dealer 5 without double is Hit", "A6 vs 3-6 is double-else-hit");
+
+		// Unsplittable A,A (split already used) is a soft 12: always Hit,
+		// never the soft-13/14 double against 5-6.
+		std::int32_t aces[2] = { 14, 14 };
+		Check(GetBasicStrategyAction(aces, 2, 5, true, false) == Action::Hit, "unsplittable A,A vs dealer 5 is Hit", "soft 12 never doubles");
+		Check(GetBasicStrategyAction(aces, 2, 6, true, false) == Action::Hit, "unsplittable A,A vs dealer 6 is Hit", "soft 12 never doubles");
 	}
 
 	void TestBasicStrategyPairs()
@@ -165,58 +184,6 @@ namespace
 		Check(GetBasicStrategyAction(strongTotal, 2, 6, true, true, false) == Action::Stand, "sanity check: non-split-Ace A,8 vs 6 is Stand anyway", "confirms the flag matters by picking a case where the ordinary answer already agrees, as a control");
 		Check(GetBasicStrategyAction(strongTotal, 2, 6, true, true, true) == Action::Stand, "split-Ace A,8 vs 6 is Stand (same answer, forced not chosen)", "same result as the control case, but for the forced reason, not the ordinary strategy reason");
 	}
-
-	// Session 13 addition -- Betting Advice's non-deck-derived fallback
-	// heuristic (BlackjackDeckSim::EvaluateBettingConfidence()'s own
-	// tests cover the exact, deck-derived path). A bust is always Low and
-	// a natural blackjack is always High regardless of the dealer's up
-	// card -- both short-circuit before the scoring heuristic even runs.
-	void TestEstimateBettingConfidenceShortCircuits()
-	{
-		std::printf("TestEstimateBettingConfidenceShortCircuits:\n");
-
-		std::int32_t bustHand[3] = { 10, 6, 8 }; // 24, bust
-		Check(EstimateBettingConfidence(bustHand, 3, 10) == Confidence::Low, "a busted hand is always Low", "no dealer up card can rescue an already-busted hand");
-
-		std::int32_t blackjackHand[2] = { 14, 10 }; // A,10 = natural 21
-		Check(EstimateBettingConfidence(blackjackHand, 2, 2) == Confidence::High, "a natural blackjack is always High, even against a weak-looking dealer 2", "a made 21 on the first two cards is the strongest possible hand regardless of the dealer's up card");
-	}
-
-	// The scoring heuristic itself: total strength + dealer up-card
-	// weakness/strength. A strong total (>=19) against a weak dealer
-	// up card (2-6, the standard "dealer bust card" range) is the
-	// clearest High; a "stiff" total (12-16) against a strong dealer up
-	// card (9-Ace) is the clearest Low; a made total (17-18) against a
-	// neutral dealer up card (7-8) lands squarely in Medium.
-	void TestEstimateBettingConfidenceScoring()
-	{
-		std::printf("TestEstimateBettingConfidenceScoring:\n");
-
-		std::int32_t strongHand[2] = { 10, 10 }; // hard 20
-		Check(EstimateBettingConfidence(strongHand, 2, 5) == Confidence::High, "hard 20 vs a weak dealer 5 is High", "strong total + weak dealer up card both push toward High");
-
-		std::int32_t stiffHand[2] = { 10, 6 }; // hard 16
-		Check(EstimateBettingConfidence(stiffHand, 2, 10) == Confidence::Low, "hard 16 vs a strong dealer 10 is Low", "the classic bust-risk stiff hand against a strong dealer card is the clearest Low");
-
-		std::int32_t madeHand[2] = { 10, 7 }; // hard 17
-		Check(EstimateBettingConfidence(madeHand, 2, 8) == Confidence::Medium, "hard 17 vs a neutral dealer 8 is Medium", "a made total against a neutral dealer up card is neither a clear win nor a clear loss");
-	}
-
-	// A soft total's extra "can't bust on the next card" bonus can tip a
-	// hand from Medium into High that an otherwise-identical HARD total
-	// would not reach -- proof the soft bonus actually changes the
-	// bucket, not just the score, for at least one real case.
-	void TestEstimateBettingConfidenceSoftBonusTipsBucket()
-	{
-		std::printf("TestEstimateBettingConfidenceSoftBonusTipsBucket:\n");
-
-		std::int32_t hardEighteen[2] = { 10, 8 }; // hard 18
-		Check(EstimateBettingConfidence(hardEighteen, 2, 5) == Confidence::Medium, "hard 18 vs a weak dealer 5 is Medium", "baseline without the soft bonus, for comparison against the soft case below");
-
-		std::int32_t softEighteen[2] = { 14, 7 }; // A,7 = soft 18
-		Check(EstimateBettingConfidence(softEighteen, 2, 5) == Confidence::High, "soft 18 (same total) vs the same weak dealer 5 is High",
-			"the soft bonus (can't bust on the next card) is what pushes an otherwise-identical 18 from Medium to High");
-	}
 }
 
 int main()
@@ -227,9 +194,6 @@ int main()
 	TestBasicStrategySoft();
 	TestBasicStrategyPairs();
 	TestSplitAceHands();
-	TestEstimateBettingConfidenceShortCircuits();
-	TestEstimateBettingConfidenceScoring();
-	TestEstimateBettingConfidenceSoftBonusTipsBucket();
 
 	if (g_failures == 0)
 	{

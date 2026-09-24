@@ -5,6 +5,50 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [Unreleased]
+
+### Changed
+- Betting advice is now BET MAX or BET MIN with the amount to bet and
+  what the round will win, e.g. "BET MAX $2.94 (+$5.88)". Since the mod
+  plays out the whole round from the deck, the result is known before
+  you bet, so Low/Medium/High no longer meant anything. Worse, Medium
+  was usually a Double win, which pays twice a normal win, and got bet
+  small. When the winning play doubles or splits, the amount is half
+  your bankroll (up to the table max), so you can still afford it.
+  Betting advice now also accounts for splits and the 3:2 blackjack payout.
+
+### Fixed
+- The mod now plays out the other (AI) seats with the game's own
+  decision table, so hit/stand/double/split and betting advice use the
+  exact deck even when other seats draw before or after you. Before, any
+  other seat drawing made it fall back to textbook strategy or a rough
+  betting estimate (e.g. a sure loss showed Medium).
+- No more Double advice on a split hand. The game doesn't offer Double
+  after a split.
+- Advice now only appears while it's actually your turn. Before, it showed
+  while a seat before yours was still playing (assuming the next card was
+  yours when that seat was about to take it), and it kept showing for a
+  hand you had already stood on.
+- Double and Split advice now check your real bet against your bankroll.
+  The bet was being read from the wrong memory slot, so the check never
+  blocked anything.
+- Insurance advice now only shows while you still have to answer the
+  insurance prompt, not for the whole round.
+- In an install where the game folder isn't writable, the editable
+  settings copy in `%LOCALAPPDATA%\RDR2ASIMods\` is created again even
+  when the shipped INI is already complete.
+- Better advice when another seat still has to act: the mod now uses
+  every card you'll draw, not just the next one (e.g. soft 16 with a 6
+  then a 5 coming is now Hit, since it reaches 21).
+- Split advice now counts a doubled hand as two bets, so it no longer
+  passes up splits that win by doubling.
+- Basic-strategy fixes: soft 18 against a dealer 3-6 now says Stand when
+  you can't double (it said Hit), and an A,A you can't split now says Hit
+  (it could say Double).
+- Reloading the settings no longer deletes the INI's `[HUD]` section in
+  the Release build, and no longer rewrites the file (losing your
+  comments) when nothing in it needs changing.
+
 ## [1.4.0] - 2026-09-23
 
 ### Fixed

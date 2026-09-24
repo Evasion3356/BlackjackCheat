@@ -176,6 +176,8 @@ namespace BlackjackHandEval
 
 		inline Action SoftAction(std::int32_t total, std::int32_t dealerVal, bool canDouble)
 		{
+			if (total <= 12) // soft 12 -- only reachable as an unsplittable A,A (or a 3+ card soft 12); always Hit
+				return Action::Hit;
 			if (total <= 14) // soft 13 (A,2) / soft 14 (A,3)
 				return (canDouble && dealerVal >= 5 && dealerVal <= 6) ? Action::Double : Action::Hit;
 			if (total <= 16) // soft 15 (A,4) / soft 16 (A,5)
@@ -184,8 +186,11 @@ namespace BlackjackHandEval
 				return (canDouble && dealerVal >= 3 && dealerVal <= 6) ? Action::Double : Action::Hit;
 			if (total == 18) // soft 18 (A,7)
 			{
-				if (canDouble && dealerVal >= 3 && dealerVal <= 6)
-					return Action::Double;
+				// "Double, else Stand" vs 3-6: when doubling isn't legal
+				// (3+ cards, or no bankroll) soft 18 stands there, it
+				// doesn't fall through to the Hit reserved for 9/10/Ace.
+				if (dealerVal >= 3 && dealerVal <= 6)
+					return canDouble ? Action::Double : Action::Stand;
 				if (dealerVal == 2 || dealerVal == 7 || dealerVal == 8)
 					return Action::Stand;
 				return Action::Hit; // 9, 10, Ace
@@ -265,69 +270,5 @@ namespace BlackjackHandEval
 			return detail::SoftAction(hand.total, dealerVal, doubleLegal);
 
 		return detail::HardAction(hand.total, dealerVal, doubleLegal);
-	}
-
-	// Session 13 addition -- Betting Advice. Low/Medium/High bucket of
-	// how strongly the CURRENT hand favors betting big, shown ABOVE the
-	// hit/stand/double/split readout (BlackjackCheat.cpp's
-	// ShowBettingAdvice toggle). The real, exact version of this
-	// (BlackjackDeckSim::EvaluateBettingConfidence()) plays the hand out
-	// via the same deck-derived engine DetermineCheatAction()/
-	// EvaluateSplit() already use and compares the real result against
-	// the dealer's real simulated final hand -- but that's only exact
-	// under the same `isLastSeatBeforeDealer`-or-dealer-already-17+
-	// precondition every other deck-derived decision in this project
-	// needs (see BlackjackDeckSim.h's own header comment). This function
-	// is the FALLBACK for when that precondition doesn't hold: a rough,
-	// textbook-strength heuristic, not a probability -- the same
-	// "textbook chart when deck simulation isn't trustworthy" convention
-	// BlackjackDeckSim::DetermineCheatAction()/EvaluateSplit() already
-	// use for hit/stand/double/split itself.
-	//
-	// Weighting: start from the hand's own total strength (a made
-	// 19-21 is strong, a "stiff" 12-16 is the classic bust-risk zone,
-	// <=11 is safe to hit/double toward a strong total), then adjust for
-	// the dealer's single visible up card using the standard "dealer bust
-	// card" range (2-6 favors the player, 9-Ace favors the dealer, 7-8
-	// left neutral), then a small bonus for a soft total (it can't bust
-	// on the very next card). The resulting score is bucketed into the
-	// same 3 tiers the deck-derived path produces.
-	enum class BettingConfidence { Low, Medium, High };
-
-	inline BettingConfidence EstimateBettingConfidence(const std::int32_t* playerRanks, std::int32_t playerCount, std::int32_t dealerUpcardRank)
-	{
-		HandValue hand = EvaluateHand(playerRanks, playerCount);
-		if (hand.bust)
-			return BettingConfidence::Low;
-		if (hand.blackjack)
-			return BettingConfidence::High;
-
-		std::int32_t dealerVal = CardValue(dealerUpcardRank);
-		bool dealerWeak = dealerVal >= 2 && dealerVal <= 6;
-		bool dealerStrong = dealerVal >= 9;
-
-		int score = 0;
-		if (hand.total >= 19)
-			score += 3;
-		else if (hand.total >= 17)
-			score += 1;
-		else if (hand.total <= 11)
-			score += 1; // safe to hit/double toward a strong total, not a stiff hand
-		else
-			score -= 1; // 12-16, the classic bust-risk "stiff" zone
-
-		if (dealerWeak)
-			score += 2;
-		else if (dealerStrong)
-			score -= 2;
-
-		if (hand.soft)
-			score += 1; // can't bust on the next card
-
-		if (score >= 4)
-			return BettingConfidence::High;
-		if (score >= 1)
-			return BettingConfidence::Medium;
-		return BettingConfidence::Low;
 	}
 }

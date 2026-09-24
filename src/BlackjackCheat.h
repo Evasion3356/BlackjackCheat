@@ -71,8 +71,8 @@ namespace BlackjackCheat
 	// predicted-board probing. Wired to the F11 menu's "Probe Deck
 	// Prediction" item. The same prediction is also self-validated
 	// automatically every round (no F11 needed) via a "PredictionCheck"
-	// log line written when each round ends -- see
-	// BlackjackCheat.cpp's UpdateDeckPrediction().
+	// log line written when each round ends -- see the Debug round log,
+	// BlackjackCheat.cpp's RoundRecorder::Finish().
 	void ProbeDeckPrediction();
 
 	// Diagnostic: dumps EVERY script-local slot of bjack_sp's running

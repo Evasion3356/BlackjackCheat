@@ -49,31 +49,28 @@ namespace
 		{ "要牌", "停牌", "加倍", "分牌" },                          // zh-CN
 	};
 
-	// BET LOW/MEDIUM/HIGH -- the betting-advice readout (see
-	// DrawBettingAdviceStatus()). Column order matches
-	// BlackjackHandEval::BettingConfidence's declaration order (Low,
-	// Medium, High). This is this mod's OWN invented HUD concept, not a
-	// real casino term -- no gambling glossary has a "BET LOW/MEDIUM/
-	// HIGH" phrase to verify against, so this table only got a grammar/
-	// diacritics pass (restoring accents an earlier ASCII-safety pass
-	// had stripped, now that BlackjackCheat.vcxproj carries /utf-8),
-	// not the same source-verification kActionLabels above got.
-	constexpr int kBettingConfidenceLabelCount = 3;
-	constexpr std::string_view kBettingConfidenceLabels[kLanguageCount][kBettingConfidenceLabelCount] =
+	// BET MIN/MAX -- the betting-advice readout (see
+	// DrawBettingAdviceStatus(), which appends the amount). Column order
+	// matches BlackjackDeckSim::BetSize's declaration order (Min, Max).
+	// This mod's own HUD wording, not a casino glossary term, so only a
+	// grammar/diacritics pass applies (same as the old LOW/MEDIUM/HIGH
+	// table it replaced) -- not the source-verification kActionLabels got.
+	constexpr int kBetSizeLabelCount = 2;
+	constexpr std::string_view kBetSizeLabels[kLanguageCount][kBetSizeLabelCount] =
 	{
-		{ "BET LOW", "BET MEDIUM", "BET HIGH" },                          // en-US
-		{ "MISE FAIBLE", "MISE MOYENNE", "MISE ÉLEVÉE" },                  // fr-FR
-		{ "NIEDRIG SETZEN", "MITTEL SETZEN", "HOCH SETZEN" },              // de-DE
-		{ "PUNTATA BASSA", "PUNTATA MEDIA", "PUNTATA ALTA" },              // it-IT
-		{ "APUESTA BAJA", "APUESTA MEDIA", "APUESTA ALTA" },               // es-ES
-		{ "APOSTA BAIXA", "APOSTA MÉDIA", "APOSTA ALTA" },                 // pt-BR
-		{ "NISKI ZAKŁAD", "ŚREDNI ZAKŁAD", "WYSOKI ZAKŁAD" },              // pl-PL
-		{ "НИЗКАЯ СТАВКА", "СРЕДНЯЯ СТАВКА", "ВЫСОКАЯ СТАВКА" },           // ru-RU
-		{ "낮은 배팅", "중간 배팅", "높은 배팅" },                          // ko-KR
-		{ "低注", "中注", "高注" },                                        // zh-TW
-		{ "ベット低", "ベット中", "ベット高" },                            // ja-JP
-		{ "APUESTA BAJA", "APUESTA MEDIA", "APUESTA ALTA" },               // es-MX
-		{ "低注", "中注", "高注" },                                        // zh-CN
+		{ "BET MIN", "BET MAX" },                    // en-US
+		{ "MISE MIN", "MISE MAX" },                  // fr-FR
+		{ "MINIMUM SETZEN", "MAXIMUM SETZEN" },      // de-DE
+		{ "PUNTATA MIN", "PUNTATA MAX" },            // it-IT
+		{ "APUESTA MÍN.", "APUESTA MÁX." },          // es-ES
+		{ "APOSTA MÍN.", "APOSTA MÁX." },            // pt-BR
+		{ "ZAKŁAD MIN.", "ZAKŁAD MAKS." },           // pl-PL
+		{ "МИН. СТАВКА", "МАКС. СТАВКА" },           // ru-RU
+		{ "최소 배팅", "최대 배팅" },                 // ko-KR
+		{ "最低注", "最高注" },                       // zh-TW
+		{ "最小ベット", "最大ベット" },               // ja-JP
+		{ "APUESTA MÍN.", "APUESTA MÁX." },          // es-MX
+		{ "最低注", "最高注" },                       // zh-CN
 	};
 
 	// "Insurance: YES"/"Insurance: No" -- see DrawInsuranceStatus().
@@ -203,12 +200,12 @@ namespace Localization
 		return kActionLabels[static_cast<int>(Current())][col];
 	}
 
-	std::string_view BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence)
+	std::string_view BetSizeLabel(BlackjackDeckSim::BetSize size)
 	{
-		int col = static_cast<int>(confidence);
-		if (col < 0 || col >= kBettingConfidenceLabelCount)
+		int col = static_cast<int>(size);
+		if (col < 0 || col >= kBetSizeLabelCount)
 			return "?";
-		return kBettingConfidenceLabels[static_cast<int>(Current())][col];
+		return kBetSizeLabels[static_cast<int>(Current())][col];
 	}
 
 	std::string_view InsuranceLabel(bool takeInsurance)
