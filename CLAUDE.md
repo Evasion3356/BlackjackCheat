@@ -7,21 +7,24 @@ exact same toolchain and conventions -- see those projects' `CLAUDE.md`
 files for the full backstory on why this stack (ScriptHookRDR2 + native
 C++, not an injected mod-menu framework) was chosen.
 
-**Current status: advisor HUD + deterministic deck-ahead prediction.
-Session 6 got the first LIVE memory confirmation** -- `kTableFieldOffset`,
-`kSeatHandsOffset`, `kHandCountOffset`, and `kHandValueOffset` are now
-CONFIRMED against a running game (via a before/after diff of a new raw
-stack-dump tool, see `docs/JOURNAL.md` Session 6), and all three needed
-correcting from their original static-trace values. Everything else in
-`src/BlackjackCheat.cpp`'s file header comment is still a STATIC TRACE
-ONLY, the same position PokerCheat started from before its own many
-rounds of live confirmation (see `../PokerCheat/docs/JOURNAL.md`) --
-Session 6's corrections are proof that matters: the original guesses for
-these same four constants were wrong (off by one or two words each).
-`src/BlackjackCheat.cpp`'s file header comment lays out every candidate
-offset with its own confidence level and the exact decompiled call sites
-it was traced from; `docs/JOURNAL.md`'s Session 2/3/4/5 entries have the
-full citation trail.
+**Current status: advisor HUD + deterministic deck-ahead prediction, with
+the struct layout live-confirmed.** Every script-local read goes through
+`ScriptLocal` chains that mirror the decompiled field paths (see
+`src/ScriptLocal.h` and the layout block near the top of
+`src/BlackjackCheat.cpp`, where each field's comment says whether it's
+CONFIRMED LIVE and a `static_assert` pins it to the slot live testing
+confirmed). Live-confirmed so far: the live table (`uLocal_14.f_756`) and
+its presentation copies (`f_17`, `f_286`), my seat (`f_9`), the seat ped
+array (`FindMySeatByPed()` agrees with `f_9`), seats, hands, card counts
+and values, bets, bankroll, the bet-lock flag, the deck with its cursor
+and count, and the round state and animation lock. The Debug round log
+confirms the end-to-end result every round: final hands, the dealer's
+real draw-out against the AI-seat replay, and the bankroll change.
+Static trace only: the insurance field (`seat.f_2`); the round-phase
+enum (`table.f_702`) hasn't been checked across two rounds in one
+sitting. The file header comment and `docs/JOURNAL.md` keep the full
+derivation history in the older flat-offset terms (see `ScriptLocal.h`
+below for how to convert).
 
 The PRIMARY feature is deck-ahead prediction (the blackjack equivalent of
 PokerCheat's `BuildPredictedBoard()`): since bjack_sp deals an entire
@@ -41,9 +44,11 @@ provably exact by the time the dealer's real turn begins. Session 19 then
 ported the AI's decision table itself (`func_623` -> `BlackjackDeckSim.h`'s
 `AiDecide()`/`SeatsAfter`), so play and betting advice are deck-exact even
 while AI seats still have to act, and the round log replays every round's
-dealer hand through it (`ReplayDealer()`, `dealerPredictionMatch`). A
-separate frozen round-start baseline still logs a Debug-only
-"PredictionCheck" line, no F11 interaction needed. There is NO card
+dealer hand through it (`ReplayDealer()`, `dealerPredictionMatch`), also
+logging a Debug-only "PredictionCheck" line per round in
+`BlackjackCheat.log` (no F11 needed). The old frozen round-start
+baseline check was removed: it assumed no seat draws and read the live
+table, which never shows the dealer's draws. There is NO card
 counting anywhere in this project -- direct deck reads make it pointless
 (removed from the mod in Session 7; the leftover header and its test
 project were deleted afterward, recoverable from git history).
@@ -320,48 +325,21 @@ the INI you're testing with there is never overwritten.
 
 ## Next concrete step
 
-(Partly out of date: Sessions 6-9 have since live-confirmed several of
-these offsets -- each constant's own comment in `src/BlackjackCheat.cpp`
-says which. The checklist below is the original plan.)
-
-None of `src/BlackjackCheat.cpp`'s struct offsets have been checked
-against a live game, even the ones now rated HIGH confidence from static
-tracing alone. To start confirming them: launch RDR2 with a Debug build
-deployed, sit at a blackjack table with a hand dealt, press F11 -> "Probe
-Table Struct" (and "Probe Seat Hands"), then read `BlackjackCheat.log` and
-compare against the real screen. Priority order (see `docs/JOURNAL.md`
-Session 5, which supersedes Session 4's list, for the reasoning behind
-each):
-1. Do the logged dealer/seat cards match what's actually showing? Also
-   check the new `currentHandIndex(f_3)` field looks sane (0 while a seat
-   is still mid-turn, equal to handCount once done).
-2. **Still the highest-value, zero-interaction check**: with the Debug
-   build running, just play a few normal rounds and read
-   `BlackjackCheat.log` afterward for "PredictionCheck" lines -- this now
-   specifically validates a FROZEN round-start baseline (Session 5); the
-   HUD's live prediction is a separate, continuously-updating thing --
-   watch it on screen instead, it should visibly settle/stop changing
-   once your own turn (and any other occupied seats after you) are done.
-3. If another seat is occupied (an AI opponent), watch the HUD's
-   "Predicted dealer draws" line update as that seat plays its turn --
-   the most direct live test of Session 5's turn-order/determinism trace.
-4. F11 -> "Probe Deck Prediction" right after a hand is dealt -- does the
-   logged dealer hole card match what's actually under the face-down card
-   once it flips over at round resolution?
-5. Compare the two logged mySeat candidates against your real seat --
-   both are now well-justified (ped-array PRIMARY and f_9 SECONDARY are
-   both HIGH confidence as of Session 5); a live DISAGREE would be a
-   genuinely surprising, high-priority thing to chase.
-6. Do the `seat.f_1`/`seat.f_4[h]` bankroll/bet log lines look like
-   plausible dollar amounts matching the real on-screen stack/bet?
-7. Split a hand once, then try to split again -- should be refused
-   (`kMaxHandsPerSeat=2` is a real enforced cap per Session 2).
-8. Split a pair of Aces specifically and watch what happens -- Session
-   3's most important claim to verify: does the game deal one card to
-   each new hand and immediately move on with NO further hit/stand/double
-   prompt (the f_699 trace)? If the game lets you act further, that trace
-   needs re-deriving.
-Expect at least one wrong candidate to need re-deriving regardless --
-PokerCheat's own struct layout took multiple sessions of exactly this loop
-before every constant was confirmed correct, and "static tracing agrees
-with itself" is not the same bar as "matches a live memory read."
+The original offset-confirmation checklist (dealer/seat cards, `f_3`,
+PredictionCheck, AI-seat turn order, the hole card, the two mySeat
+candidates, bankroll/bet) is done -- see "Current status" above. Still
+untested live, all with the Debug build and the round log running:
+1. Split a hand once, then try to split again -- should be refused
+   (`kMaxHandsPerSeat=2` is a real enforced cap per Session 2). Check the
+   round log records both hands and their outcomes.
+2. Split a pair of Aces -- Session 3's claim: the game deals one card to
+   each new hand and moves on with NO further hit/stand/double prompt (the
+   f_699 trace). If the game lets you act further, re-derive that trace.
+3. Insurance when the dealer really has blackjack (Ace up, 10-value hole):
+   the advice should say take it, and `seat.f_2` (static trace only)
+   should read -1 until you answer.
+4. A natural's bet is inferred from the payout (`betInferred` in the round
+   line) -- check it matches the bet you placed.
+5. Play two rounds in one sitting and F11 -> "Probe Table Struct" in each:
+   does the round-phase enum (`table.f_702`) go back to 2/3/7/8, or keep
+   climbing?

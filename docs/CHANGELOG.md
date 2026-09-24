@@ -27,12 +27,6 @@ tracks what an end user experiences, not internal implementation history
 - In an install where the game folder isn't writable, the editable
   settings copy in `%LOCALAPPDATA%\RDR2ASIMods\` is created again even
   when the shipped INI is already complete.
-- Pre-deal betting advice no longer uses the deck to play out your hand
-  when a seat before yours will draw first (those draws change your
-  cards); it falls back to the rough estimate instead. A seat dealt
-  blackjack doesn't count, since it never draws (e.g. 19 against a
-  dealer 20 now says Low, not Medium, when the seat before yours has
-  blackjack).
 - Better advice when another seat still has to act: the mod now uses
   every card you'll draw, not just the next one (e.g. soft 16 with a 6
   then a 5 coming is now Hit, since it reaches 21).

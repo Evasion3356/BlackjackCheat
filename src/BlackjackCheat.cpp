@@ -1369,9 +1369,9 @@ namespace BlackjackCheat
 		bool g_havePreDealBaseline = false;
 
 		// Session 9 live-testing addendum -- self-validates SimulatePreDeal()
-		// the same way UpdateDeckPrediction() already self-validates the
-		// dealer draw-out prediction (a "PredictionCheck" log line every
-		// round, no F11 needed): added specifically because live testing
+		// the same way the dealer draw-out prediction is self-validated (a
+		// "PredictionCheck" log line every round from the Debug round log,
+		// no F11 needed): added specifically because live testing
 		// caught a real MISMATCH (predicted dealer 9S/10C, actual dealer
 		// 2D/5D -- see docs/JOURNAL.md). Root cause understood but NOT
 		// fully solvable in general (see SimulatePreDeal()'s own header
@@ -1518,8 +1518,8 @@ namespace BlackjackCheat
 		// the round this still reads as "if no one else draws from this
 		// point", same as before; it just keeps re-grounding itself in
 		// reality instead of committing to a guess once and sticking with
-		// it. See UpdateDeckPrediction()'s round-end "PredictionCheck" log
-		// line and ProbeDeckPrediction() for how a live session can verify
+		// it. See the round log's "PredictionCheck" line (RoundRecorder::
+		// Finish()) and ProbeDeckPrediction() for how a live session can verify
 		// this actually converges the way this reasoning predicts.
 		PredictedHand SimulateDealerOutcome(rage::scrThread* thread, const HandCards& dealerHand, std::int32_t deckCursor, std::int32_t deckCount)
 		{
@@ -1692,47 +1692,18 @@ namespace BlackjackCheat
 		}
 
 		PredictedHand g_predictedDealerOutcome{};   // LIVE -- refreshed every tick, for the HUD (always the current best guess)
-		PredictedHand g_predictionBaseline{};       // FROZEN at round start -- for PredictionCheck validation only (see below)
-		bool g_predictionRoundActive = false;
-		HandCards g_predictionLastDealerHand{};
 
-		// Two different jobs need two different snapshots (Session 5):
-		// the HUD wants the freshest possible guess (g_predictedDealerOutcome,
-		// re-simulated from the LIVE cursor every tick -- see
-		// SimulateDealerOutcome()'s own header comment for why that's
-		// self-correcting), but VALIDATING that guess against reality only
-		// means something if the guess being checked was made BEFORE the
-		// real cards existed -- re-simulating right up to round end would
-		// just compare the dealer's real final hand against itself,
-		// trivially "matching" every time and proving nothing. So
-		// g_predictionBaseline is captured ONCE, right when each round
-		// starts (dealerHand.count's 0->positive edge, the same trigger
-		// this function used before Session 5), frozen there, and it's
-		// THAT snapshot the round-end "PredictionCheck" log line compares
-		// against the dealer's real final hand -- runs every tick
-		// regardless of HUD toggles, same convention as
-		// UpdateCardCounting(), so the log line fires automatically during
-		// normal play with no F11 interaction needed. This is the single
-		// most useful piece of live evidence a future session can gather
-		// about whether the deck chain (DeckLocal()) and the turn-order
-		// trace above are actually right, the same role PokerCheat's own
-		// "PredictionCheck ... MATCH" line played for poker_sp's deck (see
-		// that project's docs/JOURNAL.md).
-		// Does a round-start dealer draw-out prediction match the dealer's
-		// real final hand? Only the predicted draws are compared -- the
-		// first knownCount cards were real data when it was made.
-		bool PredictionMatches(const PredictedHand& predicted, const HandCards& actual)
-		{
-			if (predicted.totalCount != actual.count)
-				return false;
-			for (std::int32_t i = predicted.knownCount; i < predicted.totalCount; i++)
-			{
-				if (predicted.ranks[i] != actual.ranks[i])
-					return false;
-			}
-			return true;
-		}
-
+		// Keeps the HUD's dealer prediction current: re-simulated from the
+		// LIVE cursor every tick (see SimulateDealerOutcome()'s own header
+		// comment for why that's self-correcting), cleared when the round
+		// ends. Validating it is the Debug round log's job now
+		// (RoundRecorder::Finish() logs "PredictionCheck"): it replays the
+		// whole round from the deal with the AI-seat model and compares
+		// against the dealer's real final hand from the presentation copy.
+		// The old frozen round-start baseline assumed nobody draws and read
+		// the live table, which never shows the dealer's draws (the round
+		// resolves and resets in one script tick), so it logged `actual=[ ]`
+		// every round and was removed.
 		void UpdateDeckPrediction(rage::scrThread* thread, const HandCards& dealerHand, bool dealerHasCards)
 		{
 			if (dealerHasCards)
@@ -1740,33 +1711,10 @@ namespace BlackjackCheat
 				std::int32_t deckCursor = DeckLocal(thread).At(kDeckCursorField).AsInt32();
 				std::int32_t deckCount = ReadDeckCount(thread);
 				g_predictedDealerOutcome = SimulateDealerOutcome(thread, dealerHand, deckCursor, deckCount);
-
-				if (!g_predictionRoundActive)
-					g_predictionBaseline = g_predictedDealerOutcome;
-
-				g_predictionRoundActive = true;
-				g_predictionLastDealerHand = dealerHand;
+				return;
 			}
 
-			if (!dealerHasCards && g_predictionRoundActive)
-			{
-#ifdef _DEBUG
-				std::string predictedStr = FormatCardRun(g_predictionBaseline.ranks, g_predictionBaseline.suits,
-					g_predictionBaseline.knownCount, g_predictionBaseline.totalCount);
-				std::string actualStr = FormatCardRun(g_predictionLastDealerHand.ranks, g_predictionLastDealerHand.suits,
-					g_predictionBaseline.knownCount, g_predictionLastDealerHand.count);
-
-				bool match = PredictionMatches(g_predictionBaseline, g_predictionLastDealerHand);
-
-				Log::Write("PredictionCheck: dealer draw-out predicted-at-round-start=[ {}] actual=[ {}] {}",
-					predictedStr, actualStr,
-					match ? "MATCH" : "MISMATCH (expected -- this baseline is deliberately the OLD round-start-only guess for validation purposes; the HUD's live prediction self-corrects independently, see SimulateDealerOutcome()'s header comment)");
-#endif
-				g_predictionRoundActive = false;
-				g_predictionBaseline = PredictedHand{};
-				g_predictedDealerOutcome = PredictedHand{};
-				g_predictionLastDealerHand = HandCards{};
-			}
+			g_predictedDealerOutcome = PredictedHand{};
 		}
 
 #ifdef _DEBUG
@@ -2169,17 +2117,35 @@ namespace BlackjackCheat
 						match = replayed.ranks[i] == dealer.ranks[i];
 					line.Add("dealerPredicted", SpacedCards(replayed.ranks, replayedSuits, replayed.count))
 						.Add("dealerPredictionMatch", match);
+					Log::Write("PredictionCheck: dealer predicted=[ {} ] actual=[ {} ] {} (replayed from the deal with the AI-seat model)",
+						SpacedCards(replayed.ranks, replayedSuits, replayed.count), SpacedCards(dealer.ranks, dealer.suits, dealer.count),
+						match ? "MATCH" : "MISMATCH");
+				}
+
+				// A natural is paid and its bet zeroed in the same tick as the
+				// deal, so no read ever sees the bet. Recover it from the
+				// payout: func_1062 pays floor(2.5 * bet), so net = bet +
+				// floor(bet / 2), which inverts to (2 * net + 2) / 3.
+				const bool haveNet = g_state.bankrollBeforeRound >= 0;
+				const std::int64_t net = std::int64_t{ g_state.bankrollAfter } - g_state.bankrollBeforeRound;
+				bool betInferred = false;
+				if (g_state.bet == 0 && haveNet && net > 0 && end.handCount == 1
+					&& BlackjackHandEval::EvaluateHand(end.myHands[0].ranks, end.myHands[0].count).blackjack)
+				{
+					g_state.bet = static_cast<std::int32_t>((2 * net + 2) / 3);
+					betInferred = true;
 				}
 				line.Add("bet", std::int64_t{ g_state.bet })
 					.Add("bankrollAfter", std::int64_t{ g_state.bankrollAfter });
 				if (g_state.bankrollBeforeRound >= 0)
 				{
 					line.Add("bankrollBeforeRound", std::int64_t{ g_state.bankrollBeforeRound })
-						.Add("net", std::int64_t{ g_state.bankrollAfter } - g_state.bankrollBeforeRound);
+						.Add("net", net);
 				}
+				if (betInferred)
+					line.Add("betInferred", true);
 
-				const bool haveNet = g_state.bankrollBeforeRound >= 0;
-				ResolvePendingAtEnd(end, haveNet, std::int64_t{ g_state.bankrollAfter } - g_state.bankrollBeforeRound);
+				ResolvePendingAtEnd(end, haveNet, net);
 
 				g_state.lines.push_back(line.Str());
 				AppendLines(g_state.lines);
@@ -3374,7 +3340,7 @@ namespace BlackjackCheat
 		BlackjackHandEval::HandValue predValue = BlackjackHandEval::EvaluateHand(predicted.ranks, predicted.totalCount);
 
 		std::string predStr = FormatCardRun(predicted.ranks, predicted.suits, predicted.knownCount, predicted.totalCount);
-		Log::Write("ProbeDeckPrediction: simulated dealer draw-out from cursor={} (count={}) -- predicted extra draws=[ {}] predicted final total={}{} (Session 5: this re-simulates from the LIVE cursor every tick, so it's exact once every occupied seat ahead of the dealer is done drawing -- see SimulateDealerOutcome()'s header comment; the round-end \"PredictionCheck\" log line separately validates a FROZEN round-start baseline every round, no F11 needed for that part)",
+		Log::Write("ProbeDeckPrediction: simulated dealer draw-out from cursor={} (count={}) -- predicted extra draws=[ {}] predicted final total={}{} (Session 5: this re-simulates from the LIVE cursor every tick, so it's exact once every occupied seat ahead of the dealer is done drawing -- see SimulateDealerOutcome()'s header comment; the round-end \"PredictionCheck\" log line (Debug round log) separately validates the whole round, replayed from the deal with the AI-seat model, against the dealer's real final hand, no F11 needed)",
 			deckCursor, deckCount, predStr, predValue.total, predValue.bust ? " BUST" : "");
 
 		Log::Write("ProbeDeckPrediction: next 6 raw undrawn deck cards from cursor={} (whatever hand draws next, in whatever the real turn order is, gets these in order):", deckCursor);
