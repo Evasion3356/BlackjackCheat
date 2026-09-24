@@ -1787,3 +1787,46 @@ array offset or handle encoding). `DrawOverlay()` already reads `f_9`
 first and only falls back to the ped array when `f_9` is out of range,
 so advice picked the right seat; the Probe labels now say which one to
 trust.
+
+## Session 19 -- AI seat model, no double after split, round-log replay
+
+The first round log (`BlackjackCheat_rounds.jsonl`, 5 rounds, me at
+seat 0 with AI seats after me every round) showed the deck engine
+trusted in only 2 of 5 rounds: every decision line had
+`isLastBeforeDealer:false`, so whenever the dealer still had to draw,
+play advice fell back to basic strategy and betting advice to the
+textbook estimate. Round 5 (18 vs 8,6) was a sure loss shown as Medium.
+
+- **AI seats modeled (`BlackjackDeckSim.h`).** `func_1002` -> `func_623`
+  is now ported: `func_623`'s table (dealer up card 2..14 x hand total,
+  plus the pair branch) was transcribed with a script into
+  `kAiHardTable`/`kAiPairTable`, with `func_1002`'s overrides (Aces always
+  split; Double drops to Hit on 3+ cards, a short bankroll, or after a
+  split). `SeatsAfter` replaces the `isLastSeatBeforeDealer` bool: the
+  seats still to act after my hand are played before the dealer draws.
+  Bool overloads remain for old tests/fixtures. Pre-deal betting now
+  plays every seat (before and after mine) off the deck.
+- **The AI keys on the dealer's VISIBLE card (`dealerRanks[1]`)**, even
+  though `func_1002` reads `Table.f_2[0]`. Rounds 4 and 5 only replay
+  that way (round 5: seat 1 stood on 16, which the table only does vs a
+  6, the up card; the hole card was an 8). Likely the dealer-hand copy
+  the mod reads and `Table.f_2` differ in order -- not chased further.
+- **No double after split.** The Double prompt (`func_600`) needs
+  `func_998`, which requires `f_59 == 1`; `func_1237` alone would allow
+  it, which is where the old assumption came from. `CanDouble()`/
+  `CanSplit()` mirror `func_998`/`func_997`, and split hands inside
+  `EvaluateSplit()` never double. User report: Double advised after a
+  split. Two tests that asserted doubling within split hands were
+  corrected.
+- **Round log `dealerPredicted`** is now `ReplayDealer()`: deal the deck,
+  AI seats by the model, my seat as the cards it actually drew
+  (`myCardsDrawn`), then the dealer. The old value was the deal-time
+  "nobody draws" snapshot and mismatched whenever anyone hit. All 5
+  logged rounds replay to the real dealer hand (fixture `expectDealer`).
+  Decision lines now log `seatsAfter*` instead of `isLastBeforeDealer`.
+- `liveLastDealer` never shows the dealer's draws. That's expected: the
+  draw-out happens in the same tick as the live reset.
+
+**To confirm live:** play rounds with AI seats and check every round
+line has `"dealerPredictionMatch":true`. A split by an AI seat hasn't
+been seen yet: the split dealing order is assumed to match mine.

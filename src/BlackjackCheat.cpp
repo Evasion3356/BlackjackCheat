@@ -1599,6 +1599,11 @@ namespace BlackjackCheat
 		// a dealer simulation built on a future that was never going to
 		// happen.
 		//
+		// AI-model addendum: the bool is now a SeatsAfter
+		// (ReadSeatsAfter()): the seats still to come are played by the
+		// game's own AI table before the dealer draws, so the fallback
+		// above only remains for my own earlier split hand.
+		//
 		// Session 11 addendum -- Split is now ALSO deck-derived
 		// (BlackjackDeckSim::EvaluateSplit()) instead of unconditionally
 		// asking the blind textbook pair chart. Live bug report: J,J (a
@@ -1631,12 +1636,42 @@ namespace BlackjackCheat
 		// pure, so a recorded "decision" line (RoundRecord.h) replays
 		// through exactly this code in tests/BlackjackDeckSimTests.cpp.
 		BlackjackHandEval::Action DetermineAdvice(rage::scrThread* thread, const HandCards& playerHand, const HandCards& dealerHand,
-			std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool canSplit, bool isSplitAceHand, bool isLastSeatBeforeDealer)
+			std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool canSplit, bool isSplitAceHand, const BlackjackDeckSim::SeatsAfter& after)
 		{
 			std::int32_t futureRanks[kFutureLookahead];
 			std::int32_t futureCount = ReadFutureRanks(thread, deckCursor, deckCount, futureRanks);
 			return BlackjackDeckSim::DetermineFullAdvice(playerHand.ranks, playerHand.count, dealerHand.ranks, dealerHand.count,
-				futureRanks, futureCount, canDouble, canSplit, isSplitAceHand, isLastSeatBeforeDealer);
+				futureRanks, futureCount, canDouble, canSplit, isSplitAceHand, after);
+		}
+
+		// Every seat after mine whose turn is still to come, for the AI
+		// model (BlackjackDeckSim::SeatsAfter) -- turn order is strictly
+		// ascending, dealer last (Session 5). Replaces the old "is any
+		// higher seat occupied" flag, which made the advice fall back to
+		// basic strategy in every round of the first round log. A seat is
+		// still to come while f_3 < f_59 (a natural is marked done at the
+		// deal); one that has already split can't be modeled from hand 0,
+		// so it makes the whole answer unknown.
+		BlackjackDeckSim::SeatsAfter ReadSeatsAfter(rage::scrThread* thread, std::int32_t mySeat)
+		{
+			BlackjackDeckSim::SeatsAfter after;
+			for (std::int32_t seat = mySeat + 1; seat < static_cast<std::int32_t>(kSeatCount); seat++)
+			{
+				ScriptLocal seatBase = SeatLocal(thread, static_cast<std::uint32_t>(seat));
+				if (seatBase.At(kSeatOccupiedField).AsInt32() == -1)
+					continue;
+				std::int32_t handCount = seatBase.At(kSeatHandCountField).AsInt32();
+				if (handCount <= 0 || seatBase.At(kSeatCurrentHandField).AsInt32() >= handCount)
+					continue;
+				if (handCount > 1)
+					return BlackjackDeckSim::SeatsAfter::Unknown();
+
+				HandCards hand = ReadHand(SeatHandLocal(seatBase, 0));
+				std::int32_t bankroll = seatBase.At(kSeatBankrollField).AsInt32();
+				std::int32_t bet = SeatBetLocal(seatBase, 0).AsInt32();
+				after.Add(hand.ranks, hand.count, bankroll >= bet);
+			}
+			return after;
 		}
 
 		// Session 13 addition -- Betting Advice (user request: a Low/
@@ -1784,8 +1819,6 @@ namespace BlackjackCheat
 				TableView displayed; // last complete presentation-copy state
 				bool liveEnded = false;
 				ULONGLONG liveEndedAt = 0;
-				PredictedHand predicted{};
-				bool havePrediction = false;
 				std::vector<std::string> lines; // decision lines, written ahead of the round line
 				std::int32_t lastDecisionKey = -1;
 			};
@@ -2026,10 +2059,30 @@ namespace BlackjackCheat
 					.Add("endStateFrom", fromDisplayed ? "displayed" : "live")
 					.Add("liveLastHands", HandStrings(g_state.live))
 					.Add("liveLastDealer", SpacedCards(g_state.live.dealerHand.ranks, g_state.live.dealerHand.suits, g_state.live.dealerHand.count));
-				if (g_state.havePrediction)
+				// The dealer's hand replayed off the deck: every other seat by
+				// the AI model, mine as the cards it actually took. Replaces
+				// the deal-time "if nobody draws" snapshot, which missed
+				// whenever anyone hit (3 of the first log's 5 rounds).
+				std::int32_t myCardsDrawn = -2;
+				for (std::int32_t h = 0; h < end.handCount; h++)
+					myCardsDrawn += end.myHands[h].count;
+				bool seatsDealt[kSeatCount] = {};
+				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
+					seatsDealt[seat] = g_state.seatsDealt[seat] != 0;
+				const BlackjackDeckSim::ReplayedDealer replayed = BlackjackDeckSim::ReplayDealer(
+					g_state.deckRanks, kDeckSize, seatsDealt, g_state.mySeat, myCardsDrawn < 0 ? 0 : myCardsDrawn);
+				line.Add("dealerRanks", dealer.ranks, dealer.count)
+					.Add("myCardsDrawn", std::int64_t{ myCardsDrawn });
+				if (replayed.valid)
 				{
-					line.Add("dealerPredicted", SpacedCards(g_state.predicted.ranks, g_state.predicted.suits, g_state.predicted.totalCount))
-						.Add("dealerPredictionMatch", PredictionMatches(g_state.predicted, dealer));
+					std::int32_t replayedSuits[kHandMaxCards] = {};
+					for (std::int32_t i = 0; i < replayed.count; i++)
+						replayedSuits[i] = g_state.deckSuits[replayed.deckIndex[i]];
+					bool match = replayed.count == dealer.count;
+					for (std::int32_t i = 0; match && i < replayed.count; i++)
+						match = replayed.ranks[i] == dealer.ranks[i];
+					line.Add("dealerPredicted", SpacedCards(replayed.ranks, replayedSuits, replayed.count))
+						.Add("dealerPredictionMatch", match);
 				}
 				line.Add("bet", std::int64_t{ g_state.bet })
 					.Add("bankrollAfter", std::int64_t{ g_state.bankrollAfter });
@@ -2044,8 +2097,7 @@ namespace BlackjackCheat
 				g_state = State{};
 			}
 
-			// Called every tick, before UpdateDeckPrediction() (so the
-			// round-start prediction is still there on the round's last live tick).
+			// Called every tick, before UpdateDeckPrediction().
 			void Tick(rage::scrThread* thread, std::int32_t mySeat, bool dealerHasCards)
 			{
 				// After the live reset: follow the presentation copy until it
@@ -2086,11 +2138,6 @@ namespace BlackjackCheat
 							g_state.myLiveHandRaw[i] = hand.At(i).AsInt32();
 						g_state.haveLiveHandRaw = true;
 					}
-					if (g_predictionRoundActive)
-					{
-						g_state.predicted = g_predictionBaseline;
-						g_state.havePrediction = true;
-					}
 					return;
 				}
 
@@ -2109,7 +2156,7 @@ namespace BlackjackCheat
 			// One line per advice shown for a given (hand, card count) --
 			// i.e. per decision point, not per tick.
 			void NoteDecision(rage::scrThread* thread, std::int32_t handIndex, const HandCards& hand, const HandCards& dealerHand,
-				std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool canSplit, bool isSplitAceHand, bool isLastSeatBeforeDealer,
+				std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool canSplit, bool isSplitAceHand, const BlackjackDeckSim::SeatsAfter& after,
 				BlackjackHandEval::Action action)
 			{
 				if (!g_state.active)
@@ -2121,6 +2168,17 @@ namespace BlackjackCheat
 
 				std::int32_t futureRanks[kFutureLookahead];
 				std::int32_t futureCount = ReadFutureRanks(thread, deckCursor, deckCount, futureRanks);
+
+				std::vector<std::int32_t> afterRanks;
+				std::int32_t afterCounts[BlackjackDeckSim::kSeatCount] = {};
+				std::int32_t afterCanAfford[BlackjackDeckSim::kSeatCount] = {};
+				for (std::int32_t i = 0; i < after.count; i++)
+				{
+					const BlackjackDeckSim::AiSeat& seat = after.seats[i];
+					afterRanks.insert(afterRanks.end(), seat.ranks, seat.ranks + seat.count);
+					afterCounts[i] = seat.count;
+					afterCanAfford[i] = seat.canAffordSecondBet ? 1 : 0;
+				}
 
 				RoundRecord::JsonLine line;
 				line.Add("type", "decision")
@@ -2134,7 +2192,10 @@ namespace BlackjackCheat
 					.Add("canDouble", canDouble)
 					.Add("canSplit", canSplit)
 					.Add("isSplitAceHand", isSplitAceHand)
-					.Add("isLastBeforeDealer", isLastSeatBeforeDealer)
+					.Add("seatsAfterKnown", after.known)
+					.Add("seatsAfterRanks", afterRanks.data(), static_cast<std::int32_t>(afterRanks.size()))
+					.Add("seatsAfterCounts", afterCounts, after.count)
+					.Add("seatsAfterCanAfford", afterCanAfford, after.count)
 					.Add("action", ActionName(action));
 				g_state.lines.push_back(line.Str());
 			}
@@ -2493,38 +2554,8 @@ namespace BlackjackCheat
 			if (mySeat < 0 || mySeat >= static_cast<std::int32_t>(kSeatCount))
 				mySeat = FindMySeatByPed(thread);
 
-			// Session 9 SECOND live bug report -- turn order is strictly
-			// ascending seat 0->1->2->3 then the dealer (Session 5), so
-			// "is mySeat the last seat left to act before the dealer" is
-			// simply "is any HIGHER-indexed seat occupied" -- if so, that
-			// seat's own hits will consume some of the cursor before the
-			// dealer's real turn ever begins, breaking
-			// DetermineCheatAction()'s dealer-simulation premise (see that
-			// function's own header comment for the real bug this fixes:
-			// a bust-proof hard 9 was advised Stand because the engine
-			// assumed the very next undrawn card goes straight to the
-			// dealer, when in fact another occupied seat was due to draw
-			// it first). Computed up here (not just below, where it used
-			// to live) since Session 14's pre-deal betting-advice call
-			// needs it too, and occupancy is already meaningful before
-			// the deal happens -- see this same field's use in
-			// SimulatePreDeal()'s own seatWillPlay derivation.
-			bool isMySeatLastBeforeDealer = true;
-			if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
-			{
-				for (std::uint32_t higherSeat = static_cast<std::uint32_t>(mySeat) + 1; higherSeat < kSeatCount; higherSeat++)
-				{
-					ScriptLocal higherSeatBase = SeatLocal(thread, higherSeat);
-					if (higherSeatBase.At(kSeatOccupiedField).AsInt32() != -1)
-					{
-						isMySeatLastBeforeDealer = false;
-						break;
-					}
-				}
-			}
-
-			// Code-review fix: the mirror image of the above for seats that
-			// act BEFORE mine. While any occupied lower seat is still
+			// Code-review fix: the mirror image of ReadSeatsAfter() for
+			// seats that act BEFORE mine. While any occupied lower seat is still
 			// playing, it's not my turn -- its hits come off the cursor
 			// first, so "the next card is mine" (which every piece of
 			// advice below assumes) is false. seat.f_3 is the seat's
@@ -2909,8 +2940,11 @@ namespace BlackjackCheat
 					// before the dealer does, exactly like a higher occupied
 					// seat -- so the dealer simulation only holds for the
 					// last of my hands (BlackjackDeckSim::EvaluateSplit()
-					// already models its own first hand this way).
-					const bool isLastBeforeDealer = isMySeatLastBeforeDealer && h == handCount - 1;
+					// already models its own first hand this way). After my
+					// last hand, the seats still to come are played by the
+					// AI model (ReadSeatsAfter()).
+					const BlackjackDeckSim::SeatsAfter after = (h == handCount - 1)
+						? ReadSeatsAfter(thread, mySeat) : BlackjackDeckSim::SeatsAfter::Unknown();
 
 					// Session 10 live bug fix: canDouble previously
 					// only checked card count, so advice would
@@ -2930,11 +2964,15 @@ namespace BlackjackCheat
 					// equal to the first, so it needs the same
 					// bankroll >= bet check -- canSplit used to check
 					// only card count and the one-split cap.
+					//
+					// Live bug fix: Double was advised on a split hand. The
+					// Double button (func_998) is only offered while the
+					// seat hasn't split (f_59 == 1) -- CanDouble()/CanSplit()
+					// mirror func_998/func_997 exactly.
 					std::int32_t bankroll = seatBase.At(kSeatBankrollField).AsInt32();
 					std::int32_t bet = SeatBetLocal(seatBase, static_cast<std::uint32_t>(h)).AsInt32();
-					const bool canAffordSecondBet = bankroll >= bet;
-					bool canDouble = (hand.count == 2) && canAffordSecondBet;
-					bool canSplit = (hand.count == 2 && handCount < static_cast<std::int32_t>(kMaxHandsPerSeat)) && canAffordSecondBet;
+					bool canDouble = BlackjackDeckSim::CanDouble(hand.count, handCount, bankroll, bet);
+					bool canSplit = BlackjackDeckSim::CanSplit(hand.ranks, hand.count, handCount, bankroll, bet);
 
 					// A seat with 2 hands can only have gotten
 					// there via exactly one split (kMaxHandsPerSeat
@@ -2952,10 +2990,10 @@ namespace BlackjackCheat
 
 					if (cfg.ShowAdvice && !haveAdvice)
 					{
-						bestAction = DetermineAdvice(thread, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isLastBeforeDealer); // Session 7 fourth/sixth addendum: deck-derived simulation (BlackjackDeckSim.h), not blind basic strategy -- see that function's own header comment. isMySeatLastBeforeDealer: Session 9 second live bug fix, see DetermineAdvice()'s own header comment
+						bestAction = DetermineAdvice(thread, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, after); // Session 7 fourth/sixth addendum: deck-derived simulation (BlackjackDeckSim.h), not blind basic strategy -- see that function's own header comment
 						haveAdvice = true;
 #ifdef _DEBUG
-						RoundRecorder::NoteDecision(thread, h, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isLastBeforeDealer, bestAction);
+						RoundRecorder::NoteDecision(thread, h, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, after, bestAction);
 #endif
 					}
 				}

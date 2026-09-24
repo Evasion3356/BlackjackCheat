@@ -37,10 +37,13 @@ fully deterministic (no randomness in the decision, only in when it's
 submitted -- see `func_1002`/`func_623`), which meant the prediction
 could be made self-correcting: it now re-simulates from the LIVE deck
 cursor every tick instead of freezing a single round-start guess, so it's
-provably exact by the time the dealer's real turn begins, with no need to
-replicate the AI's own decision table. A separate frozen round-start
-baseline still self-validates automatically every round via a Debug-only
-"PredictionCheck" log line, no F11 interaction needed. There is NO card
+provably exact by the time the dealer's real turn begins. Session 19 then
+ported the AI's decision table itself (`func_623` -> `BlackjackDeckSim.h`'s
+`AiDecide()`/`SeatsAfter`), so play and betting advice are deck-exact even
+while AI seats still have to act, and the round log replays every round's
+dealer hand through it (`ReplayDealer()`, `dealerPredictionMatch`). A
+separate frozen round-start baseline still logs a Debug-only
+"PredictionCheck" line, no F11 interaction needed. There is NO card
 counting anywhere in this project -- direct deck reads make it pointless
 (removed from the mod in Session 7; the leftover header and its test
 project were deleted afterward, recoverable from git history).
@@ -171,8 +174,9 @@ at 4 MB to `.1.jsonl`. Each round writes one `decision` line per advice shown
 and one `round` line at round end. The round line holds the deck, dealt
 seats, betting advice, final hands, won/lost, bankroll, and the dealer's
 predicted vs actual draw-out. To pin a real hand as a regression test, copy
-its line into `tests/fixtures/rounds.jsonl` and add `"expectBetting"` or
-`"expectAction"`. `BlackjackDeckSimTests` replays every such line through
+its line into `tests/fixtures/rounds.jsonl` and add `"expectBetting"`,
+`"expectDealer"` (a copy of the line's `dealerRanks`; checks the AI-seat
+replay) or `"expectAction"`. `BlackjackDeckSimTests` replays every such line through
 `EvaluatePreDealBetting()`/`DetermineFullAdvice()`, the same pure functions
 the mod calls. Format: `src/RoundRecord.h`.
 

@@ -8,6 +8,13 @@ tracks what an end user experiences, not internal implementation history
 ## [Unreleased]
 
 ### Fixed
+- The mod now plays out the other (AI) seats with the game's own
+  decision table, so hit/stand/double/split and betting advice use the
+  exact deck even when other seats draw before or after you. Before, any
+  other seat drawing made it fall back to textbook strategy or a rough
+  betting estimate (e.g. a sure loss showed Medium).
+- No more Double advice on a split hand. The game doesn't offer Double
+  after a split.
 - Advice now only appears while it's actually your turn. Before, it showed
   while a seat before yours was still playing (assuming the next card was
   yours when that seat was about to take it), and it kept showing for a

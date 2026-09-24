@@ -11,14 +11,20 @@
 	  {"type":"decision", ...}  one per hit/stand/double/split advice shown
 	      for my hand, with every input DetermineFullAdvice() took:
 	      playerRanks, dealerRanks, futureRanks (the deck from the live
-	      cursor), canDouble, canSplit, isSplitAceHand, isLastBeforeDealer,
-	      plus the action the mod showed ("action").
+	      cursor), canDouble, canSplit, isSplitAceHand, the seats still to
+	      act after mine (seatsAfterKnown, seatsAfterRanks -- every seat's
+	      cards back to back -- seatsAfterCounts, seatsAfterCanAfford),
+	      plus the action the mod showed ("action"). Older lines carry
+	      isLastBeforeDealer instead; the replay test still reads it.
 	  {"type":"round", ...}     one per round, written when it ends: the
 	      whole deck as dealt (deckRanks, deckRanks[0] = first card dealt),
 	      seatsDealt, mySeat -- every input EvaluatePreDealBetting() takes --
 	      plus the betting advice shown before the deal ("betting"), and
 	      the end state: my final hands and their outcome vs the dealer,
-	      the dealer's final hand vs the draw-out predicted at deal time,
+	      the dealer's final hand ("dealerRanks") vs the hand replayed off
+	      the deck with the AI model and the cards I actually drew
+	      ("myCardsDrawn", "dealerPredicted", "dealerPredictionMatch" --
+	      BlackjackDeckSim::ReplayDealer()),
 	      where that end state came from ("endStateFrom": the lagging
 	      presentation copy, or the last live state as a fallback), and
 	      the money: bet, bankrollBeforeRound (bankroll + bet during
@@ -28,8 +34,9 @@
 	the plain-text "deck"/"cards"/"dealer" strings are for reading only.
 
 	To turn a line into a test: copy it into tests/fixtures/rounds.jsonl
-	and add "expectBetting":"Low" (round lines) or "expectAction":"Stand"
-	(decision lines). Lines with no expect* key are skipped.
+	and add "expectBetting":"Low" and/or "expectDealer":[...] (round lines;
+	expectDealer is the dealer's real final ranks, i.e. a copy of
+	dealerRanks) or "expectAction":"Stand" (decision lines). Lines with no expect* key are skipped.
 
 	The reader below only understands this file's own flat format (a
 	top-level key's int, bool, string or int array) -- not general JSON.

@@ -163,6 +163,7 @@
 #include "BlackjackHandEval.h"
 
 #include <cstdint>
+#include <string_view>
 
 namespace BlackjackDeckSim
 {
@@ -239,6 +240,239 @@ namespace BlackjackDeckSim
 		}
 
 		return result;
+	}
+
+	// ---- The game's own action legality for MY seat ----
+	//
+	// The Double and Split prompts (func_600) are only offered when
+	// func_998/func_997 pass, and both require f_59 == 1 -- the seat hasn't
+	// split. func_1237 on its own would accept a double after a split, but
+	// the button never appears, so a split hand can't double. Live bug:
+	// the mod advised Double on a split hand because it only checked the
+	// card count and bankroll.
+	inline bool CanDouble(std::int32_t cardCount, std::int32_t handsInPlay, std::int32_t bankroll, std::int32_t bet)
+	{
+		return cardCount == 2 && handsInPlay == 1 && bankroll >= bet;
+	}
+
+	inline bool CanSplit(const std::int32_t* ranks, std::int32_t cardCount, std::int32_t handsInPlay, std::int32_t bankroll, std::int32_t bet)
+	{
+		return cardCount == 2 && handsInPlay == 1 && ranks[0] == ranks[1] && bankroll >= bet;
+	}
+
+	// ---- The other seats' AI (func_1002 -> func_623) ----
+	//
+	// Every seat that isn't mine plays by func_1002: a pure function of
+	// the hand's total (f_24, best total with Aces counted high when that
+	// doesn't bust -- func_645), the dealer's up card rank, the card count
+	// and whether the seat has split. Its 1-6s "thinking" timer only
+	// delays WHEN it acts. Modeling it makes every seat's draws known, so
+	// the dealer simulation no longer has to give up whenever a seat
+	// after mine is still to act -- which was every round of the first
+	// round log (seat 0, three AI seats).
+	//
+	// func_623's table, transcribed with a script (rows = total, columns =
+	// dealer up card 2..14, J/Q/K/A as their own columns). H=Hit, S=Stand,
+	// D=Double, P=Split; an empty row is func_623's default `return 0`,
+	// which no live hand reaches. The pair rows are used only for an
+	// unsplit 2-card pair the seat can afford to split (func_997), keyed
+	// by the pair's total; a pair of Aces always splits (func_1002 checks
+	// it before the table). The up card key is the dealer's VISIBLE card,
+	// dealerRanks[1]: the round log's rounds 4 and 5 only replay with that
+	// card (e.g. 16 vs a hole 8 would have hit; the seat stood on 16 vs
+	// the visible 6).
+	namespace detail
+	{
+		constexpr std::string_view kAiHardTable[22] = {
+			"", "", "", "",
+			"HHHHHHHHHHHHH", // 4
+			"HHHHHHHHHHHHH", // 5
+			"HHHHHHHHHHHHH", // 6
+			"HHHHHHHHHHHHH", // 7
+			"HHHHHHHHHHHHH", // 8
+			"HDDDDHHHHHHHH", // 9
+			"DDDDDDDDHHHHH", // 10
+			"DDDDDDDDDDDDH", // 11
+			"HHSSSHHHHHHHH", // 12
+			"SSSSSHHHHHHHH", // 13
+			"SSSSSHHHHHHHH", // 14
+			"SSSSSHHHHHHHH", // 15
+			"SSSSSHHHHHHHH", // 16
+			"SSSSSSSSSSSSS", // 17
+			"SSSSSSSSSSSSS", // 18
+			"SSSSSSSSSSSSS", // 19
+			"SSSSSSSSSSSSS", // 20
+			"SSSSSSSSSSSSS", // 21
+		};
+
+		constexpr std::string_view kAiPairTable[22] = {
+			"", "", "", "",
+			"PPPPPPHHHHHHH", // 4: 2,2
+			"",
+			"HHHHHHHHHHHHH", // 6: 3,3
+			"",
+			"HHHPPHHHHHHHH", // 8: 4,4
+			"",
+			"DDDDDDDDHHHHH", // 10: 5,5
+			"",
+			"PPPPPHHHHHHHH", // 12: 6,6
+			"",
+			"PPPPPPHHHHHHH", // 14: 7,7
+			"",
+			"PPPPPPPPPPPPP", // 16: 8,8
+			"",
+			"PPPPPPPPSSSSS", // 18: 9,9
+			"",
+			"SSSSSSSSSSSSS", // 20: 10,10 / J,J / Q,Q / K,K
+			"",
+		};
+	}
+
+	inline BlackjackHandEval::Action AiTableAction(std::int32_t total, std::int32_t upcardRank, bool pairRow)
+	{
+		if (total < 0 || total > 21 || upcardRank < 2 || upcardRank > 14)
+			return BlackjackHandEval::Action::Stand;
+		const std::string_view row = (pairRow ? detail::kAiPairTable : detail::kAiHardTable)[total];
+		if (row.empty())
+			return BlackjackHandEval::Action::Stand;
+		switch (row[upcardRank - 2])
+		{
+			case 'H': return BlackjackHandEval::Action::Hit;
+			case 'D': return BlackjackHandEval::Action::Double;
+			case 'P': return BlackjackHandEval::Action::Split;
+			default: return BlackjackHandEval::Action::Stand;
+		}
+	}
+
+	// func_1002 itself: the table plus its overrides. Double drops to Hit
+	// once the hand has more than 2 cards, the seat can't cover a second
+	// bet, or the seat has split.
+	inline BlackjackHandEval::Action AiDecide(const std::int32_t* ranks, std::int32_t count, std::int32_t upcardRank,
+		std::int32_t handsInPlay, bool canAffordSecondBet)
+	{
+		using BlackjackHandEval::Action;
+
+		const std::int32_t total = BlackjackHandEval::EvaluateHand(ranks, count).total;
+		const bool pairRow = count == 2 && handsInPlay == 1 && ranks[0] == ranks[1] && canAffordSecondBet;
+
+		Action action = (pairRow && ranks[0] == 14) ? Action::Split : AiTableAction(total, upcardRank, pairRow);
+		if (action == Action::Double && (count > 2 || !canAffordSecondBet || handsInPlay > 1))
+			action = Action::Hit;
+		return action;
+	}
+
+	constexpr std::int32_t kSeatCount = 4; // func_280's `iParam1 < 4`
+
+	// A seat that still has to act, as the AI will play it: its hand so
+	// far (2 cards if it hasn't started) and whether it can put up a
+	// second bet.
+	struct AiSeat
+	{
+		std::int32_t ranks[kHandMaxCards] = {};
+		std::int32_t count = 0;
+		bool canAffordSecondBet = true;
+	};
+
+	// Everything that draws between the hand being decided and the dealer.
+	// `known` false means something in there can't be modeled (my own
+	// later split hand, or a seat that has already split) -- callers then
+	// fall back as they did before the AI model existed. The default is
+	// "nothing else draws".
+	struct SeatsAfter
+	{
+		bool known = true;
+		std::int32_t count = 0;
+		AiSeat seats[kSeatCount];
+
+		static SeatsAfter Unknown()
+		{
+			SeatsAfter after;
+			after.known = false;
+			return after;
+		}
+
+		void Add(const std::int32_t* ranks, std::int32_t cardCount, bool canAffordSecondBet)
+		{
+			if (count >= kSeatCount)
+			{
+				known = false;
+				return;
+			}
+			AiSeat& seat = seats[count++];
+			seat.count = cardCount > kHandMaxCards ? kHandMaxCards : cardCount;
+			for (std::int32_t i = 0; i < seat.count; i++)
+				seat.ranks[i] = ranks[i];
+			seat.canAffordSecondBet = canAffordSecondBet;
+		}
+	};
+
+	inline SeatsAfter SeatsAfterFromFlag(bool isLastSeatBeforeDealer)
+	{
+		return isLastSeatBeforeDealer ? SeatsAfter{} : SeatsAfter::Unknown();
+	}
+
+	namespace detail
+	{
+		// One AI hand from `ranks`, drawing off future. Returns cards drawn.
+		inline std::int32_t PlayAiHand(std::int32_t* ranks, std::int32_t count, std::int32_t upcardRank, std::int32_t handsInPlay,
+			bool canAffordSecondBet, const std::int32_t* futureRanks, std::int32_t futureCount)
+		{
+			std::int32_t drawn = 0;
+			while (count < kHandMaxCards && drawn < futureCount && !BlackjackHandEval::EvaluateHand(ranks, count).bust)
+			{
+				BlackjackHandEval::Action action = AiDecide(ranks, count, upcardRank, handsInPlay, canAffordSecondBet);
+				if (action != BlackjackHandEval::Action::Hit && action != BlackjackHandEval::Action::Double)
+					break;
+				ranks[count++] = futureRanks[drawn++];
+				if (action == BlackjackHandEval::Action::Double)
+					break;
+			}
+			return drawn;
+		}
+	}
+
+	// Plays one AI seat to the end of its turn. A split deals each new
+	// hand its second card straight away (the same order EvaluateSplit()
+	// models for my seat), then plays hand 1, then hand 2; split Aces get
+	// that one card and nothing more. Returns how many of futureRanks the
+	// seat drew.
+	inline std::int32_t PlayAiSeat(const AiSeat& seat, std::int32_t upcardRank, const std::int32_t* futureRanks, std::int32_t futureCount)
+	{
+		std::int32_t ranks[kHandMaxCards];
+		for (std::int32_t i = 0; i < seat.count; i++)
+			ranks[i] = seat.ranks[i];
+
+		if (seat.count == 2 && futureCount >= 2
+			&& AiDecide(ranks, 2, upcardRank, 1, seat.canAffordSecondBet) == BlackjackHandEval::Action::Split)
+		{
+			std::int32_t hand1[kHandMaxCards] = { ranks[0], futureRanks[0] };
+			std::int32_t hand2[kHandMaxCards] = { ranks[1], futureRanks[1] };
+			std::int32_t drawn = 2;
+			if (ranks[0] == 14)
+				return drawn;
+			drawn += detail::PlayAiHand(hand1, 2, upcardRank, 2, seat.canAffordSecondBet, futureRanks + drawn, futureCount - drawn);
+			drawn += detail::PlayAiHand(hand2, 2, upcardRank, 2, seat.canAffordSecondBet, futureRanks + drawn, futureCount - drawn);
+			return drawn;
+		}
+
+		return detail::PlayAiHand(ranks, seat.count, upcardRank, 1, seat.canAffordSecondBet, futureRanks, futureCount);
+	}
+
+	// The rest of the round after the hand being decided: every seat in
+	// `after` plays off the deck in turn, then the dealer draws out. A
+	// dealer already on 17+ never draws, so the seats can't change it and
+	// aren't simulated. `drawn` counts the dealer's own cards only.
+	inline DealerSimResult SimulateSeatsThenDealer(const std::int32_t* dealerRanks, std::int32_t dealerCount, const SeatsAfter& after,
+		const std::int32_t* futureRanks, std::int32_t futureCount)
+	{
+		std::int32_t used = 0;
+		if (BlackjackHandEval::EvaluateHand(dealerRanks, dealerCount).total < 17)
+		{
+			const std::int32_t upcardRank = dealerCount >= 2 ? dealerRanks[1] : dealerRanks[0];
+			for (std::int32_t i = 0; i < after.count; i++)
+				used += PlayAiSeat(after.seats[i], upcardRank, futureRanks + used, futureCount - used);
+		}
+		return SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + used, futureCount - used);
 	}
 
 	namespace detail
@@ -389,11 +623,17 @@ namespace BlackjackDeckSim
 	// defensive fallback to `dealerRanks[0]` if dealerCount is somehow
 	// under 2 (shouldn't happen in practice; this function is never
 	// called before the dealer has its own 2 cards).
+	//
+	// AI-model addendum: `after` replaces the bool. The seats still to act
+	// are played by the AI model (AiDecide()) before the dealer draws, so
+	// the simulation is exact whenever every one of them is an AI seat --
+	// the fallback below is now only for `after.known == false`. The bool
+	// overload maps true to "nothing after me" and false to unknown.
 	inline BlackjackHandEval::Action DetermineCheatAction(
 		const std::int32_t* playerRanks, std::int32_t playerCount,
 		const std::int32_t* dealerRanks, std::int32_t dealerCount,
 		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDouble, bool isSplitAceHand, bool isLastSeatBeforeDealer)
+		bool canDouble, bool isSplitAceHand, const SeatsAfter& after)
 	{
 		if (isSplitAceHand)
 			return BlackjackHandEval::Action::Stand;
@@ -405,7 +645,7 @@ namespace BlackjackDeckSim
 		// dealer who still needs to hit is actually at risk from another
 		// seat's real draws shifting the cursor first.
 		BlackjackHandEval::HandValue dealerKnown = BlackjackHandEval::EvaluateHand(dealerRanks, dealerCount);
-		bool dealerOutcomeTrustworthy = isLastSeatBeforeDealer || dealerKnown.total >= 17;
+		bool dealerOutcomeTrustworthy = after.known || dealerKnown.total >= 17;
 
 		if (!dealerOutcomeTrustworthy)
 		{
@@ -433,7 +673,7 @@ namespace BlackjackDeckSim
 			if (value.bust)
 				break; // strictly worse than any already-recorded non-bust candidate; further hits only add more bust cards
 
-			DealerSimResult dealerSim = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + futureUsed, futureCount - futureUsed);
+			DealerSimResult dealerSim = SimulateSeatsThenDealer(dealerRanks, dealerCount, after, futureRanks + futureUsed, futureCount - futureUsed);
 			Outcome outcome = CompareOutcome(value, dealerSim.value);
 			std::int32_t rank = OutcomeRank(outcome);
 
@@ -470,6 +710,16 @@ namespace BlackjackDeckSim
 			return BlackjackHandEval::Action::Double;
 
 		return BlackjackHandEval::Action::Hit;
+	}
+
+	inline BlackjackHandEval::Action DetermineCheatAction(
+		const std::int32_t* playerRanks, std::int32_t playerCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDouble, bool isSplitAceHand, bool isLastSeatBeforeDealer)
+	{
+		return DetermineCheatAction(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount,
+			canDouble, isSplitAceHand, SeatsAfterFromFlag(isLastSeatBeforeDealer));
 	}
 
 	// +1/0/-1 bet-unit value of an outcome -- lets EvaluateSplit() below
@@ -514,7 +764,7 @@ namespace BlackjackDeckSim
 		const std::int32_t* startRanks, std::int32_t startCount,
 		const std::int32_t* dealerRanks, std::int32_t dealerCount,
 		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDouble, bool isLastSeatBeforeDealer)
+		bool canDouble, const SeatsAfter& after)
 	{
 		std::int32_t ranks[kHandMaxCards];
 		std::int32_t count = startCount > kHandMaxCards ? kHandMaxCards : startCount;
@@ -527,7 +777,7 @@ namespace BlackjackDeckSim
 		while (!result.value.bust && count < kHandMaxCards && result.consumed < futureCount)
 		{
 			BlackjackHandEval::Action action = DetermineCheatAction(ranks, count, dealerRanks, dealerCount,
-				futureRanks + result.consumed, futureCount - result.consumed, canDouble, /*isSplitAceHand*/ false, isLastSeatBeforeDealer);
+				futureRanks + result.consumed, futureCount - result.consumed, canDouble, /*isSplitAceHand*/ false, after);
 
 			if (action == BlackjackHandEval::Action::Stand)
 				break;
@@ -547,6 +797,16 @@ namespace BlackjackDeckSim
 		return result;
 	}
 
+	inline PlayoutResult PlayHandOut(
+		const std::int32_t* startRanks, std::int32_t startCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDouble, bool isLastSeatBeforeDealer)
+	{
+		return PlayHandOut(startRanks, startCount, dealerRanks, dealerCount, futureRanks, futureCount,
+			canDouble, SeatsAfterFromFlag(isLastSeatBeforeDealer));
+	}
+
 	struct SplitDecision
 	{
 		bool trustworthy = false; // false means the caller must fall back to the textbook pair chart instead of trusting shouldSplit
@@ -559,16 +819,15 @@ namespace BlackjackDeckSim
 	// confirmed the rank match and that splitting is legal here);
 	// dealerRanks/dealerCount is the dealer's own already-dealt hand;
 	// futureRanks/futureCount is the exact undrawn deck from the LIVE
-	// cursor. canDoubleAfterSplit is the same double-legality flag the
-	// caller already computes for the pair itself (card-count +
-	// bankroll) -- this project doesn't model a separate, larger
-	// bankroll requirement for affording a double on EACH of two split
-	// hands; a known simplification, not a silent one.
+	// cursor. canDouble is the pair's own double-legality flag, used only
+	// for the "don't split" line: a split hand can never double
+	// (CanDouble() -- the game hides the Double button once f_59 > 1).
+	// `after` is everything that draws after my seat (see SeatsAfter).
 	inline SplitDecision EvaluateSplit(
 		const std::int32_t* playerRanks, std::int32_t playerCount,
 		const std::int32_t* dealerRanks, std::int32_t dealerCount,
 		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDoubleAfterSplit, bool isLastSeatBeforeDealer)
+		bool canDouble, const SeatsAfter& after)
 	{
 		SplitDecision result;
 
@@ -576,15 +835,15 @@ namespace BlackjackDeckSim
 			return result;
 
 		BlackjackHandEval::HandValue dealerKnown = BlackjackHandEval::EvaluateHand(dealerRanks, dealerCount);
-		bool dealerOutcomeTrustworthy = isLastSeatBeforeDealer || dealerKnown.total >= 17;
+		bool dealerOutcomeTrustworthy = after.known || dealerKnown.total >= 17;
 		if (!dealerOutcomeTrustworthy)
 			return result;
 
 		std::int32_t pairRank = playerRanks[0];
 
 		// Value of NOT splitting: play the pair as one ordinary hand.
-		PlayoutResult noSplit = PlayHandOut(playerRanks, 2, dealerRanks, dealerCount, futureRanks, futureCount, canDoubleAfterSplit, isLastSeatBeforeDealer);
-		DealerSimResult dealerForNoSplit = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + noSplit.consumed, futureCount - noSplit.consumed);
+		PlayoutResult noSplit = PlayHandOut(playerRanks, 2, dealerRanks, dealerCount, futureRanks, futureCount, canDouble, after);
+		DealerSimResult dealerForNoSplit = SimulateSeatsThenDealer(dealerRanks, dealerCount, after, futureRanks + noSplit.consumed, futureCount - noSplit.consumed);
 		std::int32_t noSplitValue = StakedOutcomeValue(CompareOutcome(noSplit.value, dealerForNoSplit.value), noSplit);
 
 		// Value of splitting: both new hands get their one guaranteed
@@ -604,17 +863,17 @@ namespace BlackjackDeckSim
 		if (isAcePair)
 			hand1.value = BlackjackHandEval::EvaluateHand(hand1Start, 2);
 		else
-			hand1 = PlayHandOut(hand1Start, 2, dealerRanks, dealerCount, futureRanks + 2, futureCount - 2, canDoubleAfterSplit, /*isLastSeatBeforeDealer*/ false);
+			hand1 = PlayHandOut(hand1Start, 2, dealerRanks, dealerCount, futureRanks + 2, futureCount - 2, /*canDouble*/ false, SeatsAfter::Unknown());
 
 		std::int32_t hand2FutureOffset = 2 + hand1.consumed;
 		PlayoutResult hand2;
 		if (isAcePair)
 			hand2.value = BlackjackHandEval::EvaluateHand(hand2Start, 2);
 		else
-			hand2 = PlayHandOut(hand2Start, 2, dealerRanks, dealerCount, futureRanks + hand2FutureOffset, futureCount - hand2FutureOffset, canDoubleAfterSplit, isLastSeatBeforeDealer);
+			hand2 = PlayHandOut(hand2Start, 2, dealerRanks, dealerCount, futureRanks + hand2FutureOffset, futureCount - hand2FutureOffset, /*canDouble*/ false, after);
 
 		std::int32_t dealerFutureOffset = hand2FutureOffset + hand2.consumed;
-		DealerSimResult dealerForSplit = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + dealerFutureOffset, futureCount - dealerFutureOffset);
+		DealerSimResult dealerForSplit = SimulateSeatsThenDealer(dealerRanks, dealerCount, after, futureRanks + dealerFutureOffset, futureCount - dealerFutureOffset);
 
 		std::int32_t splitValue = StakedOutcomeValue(CompareOutcome(hand1.value, dealerForSplit.value, /*playerNaturalCounts*/ false), hand1)
 			+ StakedOutcomeValue(CompareOutcome(hand2.value, dealerForSplit.value, /*playerNaturalCounts*/ false), hand2);
@@ -622,6 +881,16 @@ namespace BlackjackDeckSim
 		result.trustworthy = true;
 		result.shouldSplit = splitValue > noSplitValue;
 		return result;
+	}
+
+	inline SplitDecision EvaluateSplit(
+		const std::int32_t* playerRanks, std::int32_t playerCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDouble, bool isLastSeatBeforeDealer)
+	{
+		return EvaluateSplit(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount,
+			canDouble, SeatsAfterFromFlag(isLastSeatBeforeDealer));
 	}
 
 	// Session 13 addition -- Betting Advice. Answers "how strongly does
@@ -654,7 +923,7 @@ namespace BlackjackDeckSim
 		const std::int32_t* playerRanks, std::int32_t playerCount,
 		const std::int32_t* dealerRanks, std::int32_t dealerCount,
 		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDouble, bool isLastSeatBeforeDealer)
+		bool canDouble, const SeatsAfter& after)
 	{
 		BettingAdvice result;
 
@@ -669,12 +938,12 @@ namespace BlackjackDeckSim
 			return result;
 		}
 
-		bool dealerOutcomeTrustworthy = isLastSeatBeforeDealer || dealerNow.total >= 17;
+		bool dealerOutcomeTrustworthy = after.known || dealerNow.total >= 17;
 		if (!dealerOutcomeTrustworthy)
 			return result;
 
-		PlayoutResult played = PlayHandOut(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount, canDouble, isLastSeatBeforeDealer);
-		DealerSimResult dealerFinal = SimulateDealerFromRanks(dealerRanks, dealerCount, futureRanks + played.consumed, futureCount - played.consumed);
+		PlayoutResult played = PlayHandOut(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount, canDouble, after);
+		DealerSimResult dealerFinal = SimulateSeatsThenDealer(dealerRanks, dealerCount, after, futureRanks + played.consumed, futureCount - played.consumed);
 
 		result.trustworthy = true;
 		result.outcome = CompareOutcome(played.value, dealerFinal.value);
@@ -685,6 +954,16 @@ namespace BlackjackDeckSim
 			result.confidence = BlackjackHandEval::BettingConfidence::Low; // push or loss
 
 		return result;
+	}
+
+	inline BettingAdvice EvaluateBettingConfidence(
+		const std::int32_t* playerRanks, std::int32_t playerCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDouble, bool isLastSeatBeforeDealer)
+	{
+		return EvaluateBettingConfidence(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount,
+			canDouble, SeatsAfterFromFlag(isLastSeatBeforeDealer));
 	}
 
 	// The full per-hand advice decision BlackjackCheat.cpp's
@@ -698,7 +977,7 @@ namespace BlackjackDeckSim
 		const std::int32_t* playerRanks, std::int32_t playerCount,
 		const std::int32_t* dealerRanks, std::int32_t dealerCount,
 		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDouble, bool canSplit, bool isSplitAceHand, bool isLastSeatBeforeDealer)
+		bool canDouble, bool canSplit, bool isSplitAceHand, const SeatsAfter& after)
 	{
 		if (isSplitAceHand)
 			return BlackjackHandEval::Action::Stand; // forced by the game itself, see BlackjackHandEval.h's own header comment
@@ -706,7 +985,7 @@ namespace BlackjackDeckSim
 		if (canSplit && playerCount == 2 && playerRanks[0] == playerRanks[1])
 		{
 			SplitDecision splitDecision = EvaluateSplit(playerRanks, playerCount, dealerRanks, dealerCount,
-				futureRanks, futureCount, canDouble, isLastSeatBeforeDealer);
+				futureRanks, futureCount, canDouble, after);
 
 			if (splitDecision.trustworthy)
 			{
@@ -723,79 +1002,169 @@ namespace BlackjackDeckSim
 		}
 
 		return DetermineCheatAction(playerRanks, playerCount, dealerRanks, dealerCount,
-			futureRanks, futureCount, canDouble, isSplitAceHand, isLastSeatBeforeDealer);
+			futureRanks, futureCount, canDouble, isSplitAceHand, after);
+	}
+
+	inline BlackjackHandEval::Action DetermineFullAdvice(
+		const std::int32_t* playerRanks, std::int32_t playerCount,
+		const std::int32_t* dealerRanks, std::int32_t dealerCount,
+		const std::int32_t* futureRanks, std::int32_t futureCount,
+		bool canDouble, bool canSplit, bool isSplitAceHand, bool isLastSeatBeforeDealer)
+	{
+		return DetermineFullAdvice(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount,
+			canDouble, canSplit, isSplitAceHand, SeatsAfterFromFlag(isLastSeatBeforeDealer));
+	}
+
+	// The initial deal as func_1057 does it: 2 cards to each dealt seat in
+	// ascending order, then 2 to the dealer ([0] is the hole card).
+	struct InitialDeal
+	{
+		bool valid = false;
+		std::int32_t seatCards[kSeatCount][2] = {};
+		std::int32_t dealerRanks[2] = {};
+		std::int32_t dealerDeckIndex = 0; // deck index of the dealer's first card
+		std::int32_t cursor = 0;          // first undealt card
+		bool dealerNatural = false;
+	};
+
+	inline InitialDeal DealRound(const std::int32_t* deckRanks, std::int32_t deckCount, const bool* seatDealt)
+	{
+		InitialDeal deal;
+		for (std::int32_t seat = 0; seat < kSeatCount; seat++)
+		{
+			if (!seatDealt[seat])
+				continue;
+			if (deal.cursor + 2 > deckCount)
+				return deal;
+			deal.seatCards[seat][0] = deckRanks[deal.cursor];
+			deal.seatCards[seat][1] = deckRanks[deal.cursor + 1];
+			deal.cursor += 2;
+		}
+		if (deal.cursor + 2 > deckCount)
+			return deal;
+		deal.dealerRanks[0] = deckRanks[deal.cursor];
+		deal.dealerRanks[1] = deckRanks[deal.cursor + 1];
+		deal.dealerDeckIndex = deal.cursor;
+		deal.cursor += 2;
+		deal.dealerNatural = BlackjackHandEval::EvaluateHand(deal.dealerRanks, 2).blackjack;
+		deal.valid = true;
+		return deal;
+	}
+
+	// Does this seat take a turn at all? A natural never draws: func_718's
+	// case 3 marks it done (f_3 = 1 == f_59) before case 4 starts anyone's
+	// turn, and a dealer natural sends case 3 straight to case 8, so
+	// nobody draws.
+	inline bool SeatTakesTurn(const InitialDeal& deal, const bool* seatDealt, std::int32_t seat)
+	{
+		return seatDealt[seat] && !deal.dealerNatural && !BlackjackHandEval::EvaluateHand(deal.seatCards[seat], 2).blackjack;
+	}
+
+	inline AiSeat DealtAiSeat(const InitialDeal& deal, std::int32_t seat)
+	{
+		AiSeat ai;
+		ai.count = 2;
+		ai.ranks[0] = deal.seatCards[seat][0];
+		ai.ranks[1] = deal.seatCards[seat][1];
+		return ai;
 	}
 
 	// The pre-deal betting decision, made from nothing but the freshly
 	// shuffled deck (deckRanks[0] is the first card dealt), which seats
-	// will be dealt in, and my seat. Replays the initial deal exactly as
-	// func_1057 does it (2 cards to each dealt seat in ascending order,
-	// then 2 to the dealer; [0] is the dealer's hole card), then:
-	// - A seat dealt a natural never draws: func_718's case 3 marks it
-	//   done (f_3 = 1 == f_59) before case 4 starts anyone's turn, and a
-	//   dealer natural sends case 3 straight to case 8, so nobody draws.
-	// - If a lower seat will draw before me, my own cards aren't known
-	//   (its hits come off the deck first), so the answer falls back to
-	//   the textbook estimate -- a natural is still exact either way.
-	// - Otherwise my hand plays out off the deck right after the deal,
-	//   and I count as last before the dealer when no higher seat will
-	//   draw (the dealer simulation is then exact too).
+	// will be dealt in, and my seat. Every other seat is an AI seat, so
+	// the whole round plays out off the deck: the seats before mine by the
+	// AI model, then my hand by the engine's own advice, then the seats
+	// after mine and the dealer (EvaluateBettingConfidence()). AI seats are
+	// assumed able to afford a second bet -- their bets aren't down yet.
+	// Before the AI model this fell back to a textbook estimate whenever
+	// another seat drew around mine -- every round of the first round log.
+	// Its round 5 (18 vs 14, a sure loss) showed Medium and cost $402.
 	// Returns Low if deckRanks doesn't even cover the initial deal.
-	constexpr std::int32_t kPreDealSeatCount = 4; // func_280's `iParam1 < 4`
-
 	inline BlackjackHandEval::BettingConfidence EvaluatePreDealBetting(
 		const std::int32_t* deckRanks, std::int32_t deckCount,
 		const bool* seatDealt, std::int32_t mySeat)
 	{
 		using BlackjackHandEval::BettingConfidence;
 
-		if (mySeat < 0 || mySeat >= kPreDealSeatCount || !seatDealt[mySeat])
+		if (mySeat < 0 || mySeat >= kSeatCount || !seatDealt[mySeat])
 			return BettingConfidence::Low;
 
-		std::int32_t seatCards[kPreDealSeatCount][2] = {};
-		std::int32_t cursor = 0;
-		for (std::int32_t seat = 0; seat < kPreDealSeatCount; seat++)
-		{
-			if (!seatDealt[seat])
-				continue;
-			if (cursor + 2 > deckCount)
-				return BettingConfidence::Low;
-			seatCards[seat][0] = deckRanks[cursor];
-			seatCards[seat][1] = deckRanks[cursor + 1];
-			cursor += 2;
-		}
-		if (cursor + 2 > deckCount)
+		const InitialDeal deal = DealRound(deckRanks, deckCount, seatDealt);
+		if (!deal.valid)
 			return BettingConfidence::Low;
-		const std::int32_t dealerRanks[2] = { deckRanks[cursor], deckRanks[cursor + 1] };
-		cursor += 2;
 
-		const bool dealerNatural = BlackjackHandEval::EvaluateHand(dealerRanks, 2).blackjack;
-		auto seatDraws = [&](std::int32_t seat)
-		{
-			return seatDealt[seat] && !dealerNatural && !BlackjackHandEval::EvaluateHand(seatCards[seat], 2).blackjack;
-		};
-
-		bool lowerSeatDrawsFirst = false;
+		const std::int32_t upcardRank = deal.dealerRanks[1];
+		std::int32_t cursor = deal.cursor;
 		for (std::int32_t seat = 0; seat < mySeat; seat++)
-			lowerSeatDrawsFirst = lowerSeatDrawsFirst || seatDraws(seat);
-
-		bool isLastSeatBeforeDealer = true;
-		for (std::int32_t seat = mySeat + 1; seat < kPreDealSeatCount; seat++)
-			isLastSeatBeforeDealer = isLastSeatBeforeDealer && !seatDraws(seat);
-
-		const std::int32_t* myRanks = seatCards[mySeat];
-		if (lowerSeatDrawsFirst)
 		{
-			BlackjackHandEval::HandValue playerNow = BlackjackHandEval::EvaluateHand(myRanks, 2);
-			if (playerNow.blackjack)
-				return dealerNatural ? BettingConfidence::Low : BettingConfidence::High;
-			return BlackjackHandEval::EstimateBettingConfidence(myRanks, 2, dealerRanks[1]);
+			if (SeatTakesTurn(deal, seatDealt, seat))
+				cursor += PlayAiSeat(DealtAiSeat(deal, seat), upcardRank, deckRanks + cursor, deckCount - cursor);
 		}
 
-		BettingAdvice advice = EvaluateBettingConfidence(myRanks, 2, dealerRanks, 2,
-			deckRanks + cursor, deckCount - cursor, /*canDouble*/ true, isLastSeatBeforeDealer);
+		SeatsAfter after;
+		for (std::int32_t seat = mySeat + 1; seat < kSeatCount; seat++)
+		{
+			if (SeatTakesTurn(deal, seatDealt, seat))
+				after.Add(deal.seatCards[seat], 2, /*canAffordSecondBet*/ true);
+		}
+
+		const std::int32_t* myRanks = deal.seatCards[mySeat];
+		BettingAdvice advice = EvaluateBettingConfidence(myRanks, 2, deal.dealerRanks, 2,
+			deckRanks + cursor, deckCount - cursor, /*canDouble*/ true, after);
 		if (advice.trustworthy)
 			return advice.confidence;
-		return BlackjackHandEval::EstimateBettingConfidence(myRanks, 2, dealerRanks[1]);
+		return BlackjackHandEval::EstimateBettingConfidence(myRanks, 2, upcardRank);
+	}
+
+	// Replays a finished round's dealer hand off its deck: the deal, every
+	// other seat by the AI model, my seat as the myCardsDrawn cards it
+	// actually took (total cards across my final hands minus the 2 dealt,
+	// so a split's extra cards count too), then the dealer's draw-out. The
+	// round log compares this with the dealer's real final hand every
+	// round, so a mismatch means the deck read, the turn order or the AI
+	// model is wrong. deckIndex[i] is where the dealer's i-th card sits in
+	// the deck (for printing suits).
+	struct ReplayedDealer
+	{
+		bool valid = false;
+		std::int32_t ranks[kHandMaxCards] = {};
+		std::int32_t deckIndex[kHandMaxCards] = {};
+		std::int32_t count = 0;
+	};
+
+	inline ReplayedDealer ReplayDealer(const std::int32_t* deckRanks, std::int32_t deckCount,
+		const bool* seatDealt, std::int32_t mySeat, std::int32_t myCardsDrawn)
+	{
+		ReplayedDealer result;
+		const InitialDeal deal = DealRound(deckRanks, deckCount, seatDealt);
+		if (!deal.valid)
+			return result;
+
+		const std::int32_t upcardRank = deal.dealerRanks[1];
+		std::int32_t cursor = deal.cursor;
+		for (std::int32_t seat = 0; seat < kSeatCount && cursor <= deckCount; seat++)
+		{
+			if (!SeatTakesTurn(deal, seatDealt, seat))
+				continue;
+			if (seat == mySeat)
+				cursor += myCardsDrawn;
+			else
+				cursor += PlayAiSeat(DealtAiSeat(deal, seat), upcardRank, deckRanks + cursor, deckCount - cursor);
+		}
+		if (cursor > deckCount)
+			return result;
+
+		result.ranks[0] = deal.dealerRanks[0];
+		result.ranks[1] = deal.dealerRanks[1];
+		result.deckIndex[0] = deal.dealerDeckIndex;
+		result.deckIndex[1] = deal.dealerDeckIndex + 1;
+		result.count = 2;
+		while (BlackjackHandEval::EvaluateHand(result.ranks, result.count).total < 17 && result.count < kHandMaxCards && cursor < deckCount)
+		{
+			result.deckIndex[result.count] = cursor;
+			result.ranks[result.count++] = deckRanks[cursor++];
+		}
+		result.valid = true;
+		return result;
 	}
 }
