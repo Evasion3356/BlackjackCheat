@@ -1741,7 +1741,8 @@ does now, so they are deleted (plus the stale `ClInclude` in
 A full code review found, and this session fixed (see `docs/CHANGELOG.md`
 [Unreleased] and each fix's own "Code-review" comment in the source):
 
-- **Bet offset (`kSeatBetOffset` 4 -> 5), NOT yet confirmed live.**
+- **Bet offset (`kSeatBetOffset` 4 -> 5), CONFIRMED LIVE** (see the
+  live result below).
   `seat.f_4[h]` is a script array, and a YSC array's first word is its
   element count, so `f_4` itself is the size word (2) and `bet[h]` is at
   `f_4 + 1 + h`. Evidence: Session 9's raw dump table logged `f_4[0] = 2`
@@ -1777,3 +1778,12 @@ A full code review found, and this session fixed (see `docs/CHANGELOG.md`
   candidates in `DetermineCheatAction()`. See `BlackjackDeckSim.h`'s
   header comment (code-review addendum, item 2).
 
+**Live result (after the fixes).** ProbeSeatHands with a $250 bet:
+`seat 1 hand 0 ... bet(f_4[0], slot 863)=250 betArraySizeWord(f_4)=2`
+(NPC seat 0: bet 4, size word 2). The bet offset is confirmed. The same
+log had `mySeat (ped-array)=-1, f_9=1` with the human at seat 1: `f_9`
+is right and `FindMySeatByPed()` is wrong (unknown why -- stale ped
+array offset or handle encoding). `DrawOverlay()` already reads `f_9`
+first and only falls back to the ped array when `f_9` is out of range,
+so advice picked the right seat; the Probe labels now say which one to
+trust.

@@ -868,7 +868,7 @@ namespace BlackjackCheat
 	constexpr std::uint32_t kTableFieldOffset = 757;  // uLocal_14.f_757 -- CONFIRMED LIVE (Session 6, off-by-one fix from the original 756 static-trace guess -- see file header comment and docs/JOURNAL.md)
 	constexpr std::uint32_t kTableSlot = kLocalStructIndex + kTableFieldOffset;
 
-	constexpr std::uint32_t kMySeatSlot = kLocalStructIndex + 9; // uLocal_14.f_9 -- HIGH confidence (Session 5, via func_597's real "is this the human seat" predicate -- see file header comment), SECONDARY candidate only -- see FindMySeatByPed() below for the primary method (Session 3)
+	constexpr std::uint32_t kMySeatSlot = kLocalStructIndex + 9; // uLocal_14.f_9 -- HIGH confidence (Session 5, via func_597's real "is this the human seat" predicate -- see file header comment), CONFIRMED LIVE (Session 18: read 1 with the human at seat 1, while FindMySeatByPed() returned -1 -- the ped-array candidate is wrong/stale, so f_9 is the one to trust; DrawOverlay() already reads it first)
 
 	// uLocal_14.f_1724 -- sibling "ped/scene" struct to Table, same role
 	// as poker_sp's own f_3310 -- HIGH confidence (Session 3, see file
@@ -986,9 +986,9 @@ namespace BlackjackCheat
 	// f_4..f_6, then the live-confirmed bet-lock flag at f_7. Effect of
 	// the old read: canDouble reduced to `bankroll >= 2`, so the Session
 	// 10 "don't advise Double without the bankroll" fix never actually
-	// gated anything. STATIC/DUMP DERIVATION, not yet re-confirmed live:
-	// place a bet other than $2 and check ProbeSeatHands()'s log line,
-	// which prints both the size word and bet[h] side by side.
+	// gated anything. CONFIRMED LIVE (Session 18): with a $250 bet on
+	// the human seat, ProbeSeatHands() logged bet(f_4[0], +5)=250 and
+	// the size word (+4)=2 (an NPC seat read bet=4, size word 2).
 	constexpr std::uint32_t kSeatBetArrayOffset = 4;   // seat.f_4 -- the array's size word (expect 2)
 	constexpr std::uint32_t kSeatBetOffset = kSeatBetArrayOffset + 1; // seat.f_4[0] -- bet[h] is at +5+h. Session 10: read live by OnTick()'s advice loop for the canDouble/canSplit bankroll checks.
 	constexpr std::uint32_t kSeatCurrentHandIndexOffset = 3; // seat.f_3 -- HIGH confidence (Session 5, f_N=offset+N convention + func_1063's direct f_3<f_59 comparison), static trace only. Read by DrawOverlay() to pick which split hand gets advice, with a first-live-hand fallback if it reads out of range
@@ -2684,7 +2684,7 @@ namespace BlackjackCheat
 
 		std::int32_t mySeatByF9 = ReadInt(thread, kMySeatSlot);
 		std::int32_t mySeat = FindMySeatByPed(thread);
-		Log::Write("ProbeTableStruct: mySeat candidates -- f_9 (slot {}, SECONDARY, MEDIUM confidence) = {}, ped-array match (PRIMARY, HIGH confidence, see FindMySeatByPed) = {}{}",
+		Log::Write("ProbeTableStruct: mySeat candidates -- f_9 (slot {}, CONFIRMED LIVE) = {}, ped-array match (FindMySeatByPed, returned -1 live in Session 18 -- unreliable) = {}{}",
 			kMySeatSlot, mySeatByF9, mySeat, (mySeatByF9 == mySeat) ? "  <-- AGREE" : "  <-- DISAGREE, worth re-checking against the real screen");
 
 		Log::Write("ProbeTableStruct: seat ped handles (uLocal_14.f_1724+946, stride 46, slot base {}):", kPedSceneSlot + kSeatPedArrayOffset);
@@ -2784,7 +2784,7 @@ namespace BlackjackCheat
 
 		std::int32_t mySeat = FindMySeatByPed(thread);
 		std::int32_t mySeatByF9 = ReadInt(thread, kMySeatSlot);
-		Log::Write("ProbeSeatHands: mySeat (ped-array, PRIMARY)={}, f_9 (SECONDARY)={}{}",
+		Log::Write("ProbeSeatHands: mySeat (ped-array, unreliable -- -1 live in Session 18)={}, f_9 (CONFIRMED LIVE)={}{}",
 			mySeat, mySeatByF9, (mySeat == mySeatByF9) ? "  <-- AGREE" : "  <-- DISAGREE");
 
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
