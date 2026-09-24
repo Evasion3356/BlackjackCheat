@@ -812,6 +812,18 @@
 	DetermineAdvice()/DrawAdviceStatus(). NOT yet live-tested against a
 	real hand.
 
+	Session 20 -- the above is superseded. Once the AI seats were modelled
+	(Session 19) the round's result is exact before the bet, so there's no
+	"confidence" left to grade, and the second round log showed Low/
+	Medium/High costing money: every Medium was a double win (twice a
+	plain win's pay) and got bet small. BlackjackDeckSim::
+	AdvisePreDealBet() now returns the round's payout in half bets (a
+	natural's 3:2 included, splits now modelled too) and a bet: MAX when
+	it wins, MIN otherwise, with an amount from the bankroll and the
+	table's limits (uLocal_14.f_10.f_4/f_5, static trace only) -- half the
+	bankroll when the winning line doubles or splits, so it stays
+	affordable. EstimateBettingConfidence() and the enum were removed.
+
 	Not yet done: blackjack payout ratio (3:2 vs 6:5 -- one plausible-
 	looking `1.5f` constant was found near line 7246 in Session 2 but
 	turned out to belong to an unrelated card-prop/caddy setup function,
@@ -890,6 +902,9 @@ namespace BlackjackCheat
 	// `uLocal_797 = 4` (f_756 + 27).
 	constexpr std::uint32_t kRootLocalIndex = 14;       // uLocal_14
 	constexpr std::uint32_t kMySeatField = 9;           // uLocal_14.f_9 -- the human's seat. CONFIRMED LIVE (Session 18: read 1 with the human at seat 1). Session 5 traced it via func_597's "is this the human seat" predicate.
+	constexpr std::uint32_t kBetLimitsField = 10;       // uLocal_14.f_10 -- the table's bet limits. Static trace only: func_225 (the betting state) passes &uLocal_14.f_10 with uLocal_14.f_9 as the seat to func_473/func_474, whose func_948 clamps the bet between f_4 and f_5 (each capped at the bankroll, rounded down to a multiple of f_4). Logged every round as tableMinBet/tableMaxBet.
+	constexpr std::uint32_t kMinBetField = 4;           // f_10.f_4 -- minimum bet and bet step, in cents
+	constexpr std::uint32_t kMaxBetField = 5;           // f_10.f_5 -- maximum bet, in cents
 	constexpr std::uint32_t kDisplayedTableField = 17;  // uLocal_14.f_17 -- PRESENTATION copy of the table, see below
 	constexpr std::uint32_t kIncomingTableField = 286;  // uLocal_14.f_286 -- the next snapshot being animated into f_17
 	constexpr std::uint32_t kLiveTableField = 756;      // uLocal_14.f_756 -- the live table. CONFIRMED LIVE (Session 6; the old flat base was +757, one word too far).
@@ -988,6 +1003,7 @@ namespace BlackjackCheat
 
 	constexpr ScriptLocal RootLocal(rage::scrThread* thread) { return ScriptLocal(thread, kRootLocalIndex); }
 	constexpr ScriptLocal MySeatLocal(rage::scrThread* thread) { return RootLocal(thread).At(kMySeatField); }
+	constexpr ScriptLocal BetLimitsLocal(rage::scrThread* thread) { return RootLocal(thread).At(kBetLimitsField); }
 	constexpr ScriptLocal LiveTableLocal(rage::scrThread* thread) { return RootLocal(thread).At(kLiveTableField); }
 	constexpr ScriptLocal DisplayedTableLocal(rage::scrThread* thread) { return RootLocal(thread).At(kDisplayedTableField); }
 	constexpr ScriptLocal SeatPedLocal(rage::scrThread* thread, std::uint32_t seat) { return RootLocal(thread).At(kPedSceneField).At(kPedArrayField).At(seat, kPedStride); }
@@ -1005,6 +1021,7 @@ namespace BlackjackCheat
 	// Pinned to the absolute slots live testing confirmed (ProbeTableStruct/
 	// ProbeSeatHands logs, Sessions 6-18).
 	static_assert(MySeatLocal(nullptr).Index() == 23);
+	static_assert(BetLimitsLocal(nullptr).At(kMinBetField).Index() == 28 && BetLimitsLocal(nullptr).At(kMaxBetField).Index() == 29); // static trace only, not yet live-confirmed
 	static_assert(DealerHandLocal(LiveTableLocal(nullptr)).At(kHandCardsField).Index() == 772);                  // dealer card array size word (`uLocal_772 = 11`)
 	static_assert(HandCardLocal(DealerHandLocal(LiveTableLocal(nullptr)), 0).Index() == 773);                    // dealer card 0
 	static_assert(SeatLocal(nullptr, 0).Index() == 798 && SeatLocal(nullptr, 1).Index() == 858 && SeatLocal(nullptr, 3).Index() == 978);
@@ -1674,21 +1691,29 @@ namespace BlackjackCheat
 			return after;
 		}
 
-		// Session 13 addition -- Betting Advice (user request: a Low/
-		// Medium/High bet-sizing readout, shown above the ordinary
-		// hit/stand/double/split line), shown pre-deal only (Session 14).
-		// The whole decision is BlackjackDeckSim::EvaluatePreDealBetting()
-		// -- pure, taking only the freshly shuffled deck, which seats will
-		// be dealt in and my seat, so a recorded "round" line replays
-		// through it exactly (tests/fixtures/rounds.jsonl). See that
-		// function's own comment for when it trusts the deck and when it
-		// falls back to BlackjackHandEval::EstimateBettingConfidence().
-		BlackjackHandEval::BettingConfidence DetermineBettingAdvice(rage::scrThread* thread, const bool (&seatWillPlay)[kSeatCount], std::int32_t mySeat)
+		// Betting advice, shown pre-deal only (Session 14), above the
+		// hit/stand/double/split line. The whole decision is
+		// BlackjackDeckSim::AdvisePreDealBet() -- pure, taking the freshly
+		// shuffled deck, which seats will be dealt in, my seat, my bankroll
+		// and the table's limits, so a recorded "round" line replays
+		// through it exactly (tests/fixtures/rounds.jsonl). Session 20
+		// replaced Low/Medium/High with Max/Min and an amount: the round's
+		// result is known before the bet, and "Medium" (a win that needs a
+		// hit) was usually a double win, the best-paying round of all.
+		// The bankroll is f_1 plus any bet already in f_4[0] (it reads 0
+		// all through betting, see kSeatBetsField).
+		BlackjackDeckSim::PreDealBet DetermineBettingAdvice(rage::scrThread* thread, const bool (&seatWillPlay)[kSeatCount], std::int32_t mySeat)
 		{
 			std::int32_t deckRanks[kDeckSize];
 			for (std::int32_t i = 0; i < kDeckSize; i++)
 				deckRanks[i] = DeckCardLocal(thread, i).At(kCardRankField).AsInt32();
-			return BlackjackDeckSim::EvaluatePreDealBetting(deckRanks, kDeckSize, seatWillPlay, mySeat);
+
+			ScriptLocal seatBase = SeatLocal(thread, static_cast<std::uint32_t>(mySeat));
+			const std::int32_t bankroll = seatBase.At(kSeatBankrollField).AsInt32() + SeatBetLocal(seatBase, 0).AsInt32();
+			BlackjackDeckSim::TableLimits limits;
+			limits.minBet = BetLimitsLocal(thread).At(kMinBetField).AsInt32();
+			limits.maxBet = BetLimitsLocal(thread).At(kMaxBetField).AsInt32();
+			return BlackjackDeckSim::AdvisePreDealBet(deckRanks, kDeckSize, seatWillPlay, mySeat, bankroll, limits);
 		}
 
 		PredictedHand g_predictedDealerOutcome{};   // LIVE -- refreshed every tick, for the HUD (always the current best guess)
@@ -1756,7 +1781,9 @@ namespace BlackjackCheat
 				std::int32_t seatsDealt[kSeatCount] = {};
 				std::int32_t deckRanks[kDeckSize] = {};
 				std::int32_t deckSuits[kDeckSize] = {};
-				std::string betting; // pre-deal betting advice shown, empty if none was
+				std::string betting; // pre-deal betting advice shown (Max/Min), empty if none was
+				BlackjackDeckSim::PreDealBet bettingAdvice{}; // its details, when betting isn't empty
+				BlackjackDeckSim::TableLimits tableLimits{};  // read at the deal
 				std::int32_t bankrollBeforeRound = -1; // bankroll + bet during betting; -1 = never saw the betting phase
 				std::int32_t bet = 0;
 				std::int32_t bankrollAfter = 0;
@@ -1786,18 +1813,10 @@ namespace BlackjackCheat
 
 			State g_state;
 			std::string g_bettingShown; // latest pre-deal betting advice, carried into the round at the deal
+			BlackjackDeckSim::PreDealBet g_bettingShownAdvice{};
 			std::int32_t g_bettingBankroll = -1; // my bankroll + bet, sampled every betting-phase tick
 			std::int32_t g_bettingBet = 0;
 
-			std::string_view ConfidenceName(BlackjackHandEval::BettingConfidence confidence)
-			{
-				switch (confidence)
-				{
-					case BlackjackHandEval::BettingConfidence::High: return "High";
-					case BlackjackHandEval::BettingConfidence::Medium: return "Medium";
-					default: return "Low";
-				}
-			}
 
 			std::string_view ActionName(BlackjackHandEval::Action action)
 			{
@@ -1872,9 +1891,10 @@ namespace BlackjackCheat
 					file << line << '\n';
 			}
 
-			void NoteBettingShown(BlackjackHandEval::BettingConfidence confidence)
+			void NoteBettingShown(const BlackjackDeckSim::PreDealBet& bet)
 			{
-				g_bettingShown = ConfidenceName(confidence);
+				g_bettingShown = BlackjackDeckSim::BetSizeName(bet.size);
+				g_bettingShownAdvice = bet;
 			}
 
 			void Begin(rage::scrThread* thread, std::int32_t mySeat)
@@ -1884,7 +1904,10 @@ namespace BlackjackCheat
 				g_state.id = Timestamp();
 				g_state.mySeat = mySeat;
 				g_state.betting = g_bettingShown;
+				g_state.bettingAdvice = g_bettingShownAdvice;
 				g_bettingShown.clear();
+				g_state.tableLimits.minBet = BetLimitsLocal(thread).At(kMinBetField).AsInt32();
+				g_state.tableLimits.maxBet = BetLimitsLocal(thread).At(kMaxBetField).AsInt32();
 
 				for (std::int32_t i = 0; i < kDeckSize; i++)
 				{
@@ -2082,7 +2105,19 @@ namespace BlackjackCheat
 					.Add("deckRanks", g_state.deckRanks, kDeckSize)
 					.Add("deck", SpacedCards(g_state.deckRanks, g_state.deckSuits, kDeckSize));
 				if (!g_state.betting.empty())
-					line.Add("betting", g_state.betting);
+				{
+					// bettingNet: the plan's payout in half bets; betAdvised and
+					// bettingPredictedNet in cents (-1/0 when the limits read as unset).
+					line.Add("betting", g_state.betting)
+						.Add("bettingNet", std::int64_t{ g_state.bettingAdvice.plan.netHalfUnits })
+						.Add("bettingStake", std::int64_t{ g_state.bettingAdvice.plan.stakeUnits })
+						.Add("betAdvised", std::int64_t{ g_state.bettingAdvice.amount })
+						.Add("bettingPredictedNet", std::int64_t{ g_state.bettingAdvice.predictedNet });
+				}
+				// The bet limits (uLocal_14.f_10.f_4/f_5), static trace only
+				// -- check them against the game's own bet dial.
+				line.Add("tableMinBet", std::int64_t{ g_state.tableLimits.minBet })
+					.Add("tableMaxBet", std::int64_t{ g_state.tableLimits.maxBet });
 				// net: bankroll after the round minus bankroll before the bet
 				// (the bet is already deducted by the deal) -- the game's own
 				// payout, independent of any card reading.
@@ -2342,20 +2377,34 @@ namespace BlackjackCheat
 			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), adviceX, adviceY);
 		}
 
-		// Session 13 addition -- Betting Advice, same pipeline/convention
-		// as DrawAdviceStatus but positioned just ABOVE it (user request:
-		// "Display it above ShowAdvice"), same offset-from-AdviceY
-		// technique DrawInsuranceStatus below uses to sit just below it.
-		// BET LOW/MEDIUM/HIGH wording now lives in Localization.cpp's
-		// kBettingConfidenceLabels (one row per supported language) --
-		// see that file for the full table. Callers use
-		// Localization::BettingConfidenceLabel(confidence) directly.
+		// Betting advice, same pipeline/convention as DrawAdviceStatus but
+		// positioned just ABOVE it (user request: "Display it above
+		// ShowAdvice"). Reads e.g. "BET MAX $2.94 (+$5.88)" or
+		// "BET MIN $0.02"; just the label when the bet limits read as
+		// unset. The BET MAX/MIN wording lives in Localization.cpp's
+		// kBetSizeLabels.
 
 #ifndef _DEBUG
 		constexpr float kReleaseBettingAdviceYOffset = -0.045f;
 #endif
 
-		void DrawBettingAdviceStatus(BlackjackHandEval::BettingConfidence confidence)
+		// "$2.94" -- cents as dollars, no allocation once `out` has grown.
+		void AppendDollars(std::string& out, std::int32_t cents)
+		{
+			if (cents < 0)
+			{
+				out.push_back('-');
+				cents = -cents;
+			}
+			std::array<char, 12> digits{};
+			out.push_back('$');
+			out.append(digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), cents / 100).ptr);
+			out.push_back('.');
+			out.push_back(static_cast<char>('0' + (cents % 100) / 10));
+			out.push_back(static_cast<char>('0' + cents % 10));
+		}
+
+		void DrawBettingAdviceStatus(const BlackjackDeckSim::PreDealBet& bet)
 		{
 #ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
@@ -2365,15 +2414,26 @@ namespace BlackjackCheat
 			float x = kReleaseAdviceX;
 			float y = kReleaseAdviceY + kReleaseBettingAdviceYOffset;
 #endif
-			int r = 255, g = 140, b = 140;
-			switch (confidence)
+			const bool max = bet.size == BlackjackDeckSim::BetSize::Max;
+			const int r = max ? 140 : 255;
+			const int g = max ? 255 : 140;
+			const int b = 140;
+
+			static std::string label;
+			label.assign(Localization::BetSizeLabel(bet.size));
+			if (bet.amount >= 0)
 			{
-				case BlackjackHandEval::BettingConfidence::Low: r = 255; g = 140; b = 140; break;
-				case BlackjackHandEval::BettingConfidence::Medium: r = 255; g = 220; b = 140; break;
-				case BlackjackHandEval::BettingConfidence::High: r = 140; g = 255; b = 140; break;
+				label.push_back(' ');
+				AppendDollars(label, bet.amount);
+				if (bet.predictedNet > 0)
+				{
+					label.append(" (+");
+					AppendDollars(label, bet.predictedNet);
+					label.push_back(')');
+				}
 			}
 
-			const char* formatText = WrapBgFormatText(Localization::BettingConfidenceLabel(confidence), 32);
+			const char* formatText = WrapBgFormatText(label, 32);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
 			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
@@ -2911,17 +2971,20 @@ namespace BlackjackCheat
 			// own header comment) -- so this can never fire post-deal.
 			// Reuses the exact same deterministic preDeal data
 			// ShowCardsBeforeBet's icon preview above already reads.
-			// canDouble is hardcoded true here: the real bankroll>=bet
-			// gate the post-deal Hit/Stand loop below computes isn't
-			// meaningful yet at this phase since no bet has been placed
-			// for the hand that hasn't been dealt.
+			// Double/Split are assumed affordable unless the bankroll
+			// can't cover two minimum bets (AdvisePreDealBet() sizes the
+			// bet so they stay affordable). Nothing is shown when the deck
+			// can't settle the round.
 			if (cfg.ShowBettingAdvice && preDeal.valid && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
 			{
-				BlackjackHandEval::BettingConfidence preDealBettingConfidence = DetermineBettingAdvice(thread, preDeal.seatWillPlay, mySeat);
+				const BlackjackDeckSim::PreDealBet preDealBet = DetermineBettingAdvice(thread, preDeal.seatWillPlay, mySeat);
+				if (preDealBet.plan.exact)
+				{
 #ifdef _DEBUG
-				RoundRecorder::NoteBettingShown(preDealBettingConfidence);
+					RoundRecorder::NoteBettingShown(preDealBet);
 #endif
-				DrawBettingAdviceStatus(preDealBettingConfidence);
+					DrawBettingAdviceStatus(preDealBet);
+				}
 			}
 
 			BlackjackHandEval::Action bestAction = BlackjackHandEval::Action::Stand;

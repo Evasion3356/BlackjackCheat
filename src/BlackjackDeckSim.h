@@ -98,6 +98,12 @@
 // introducing a second, parallel simulation -- see that function's own
 // header comment below for the full weighting rationale.
 //
+// Session 20 addendum -- EvaluateBettingConfidence() is gone. With the AI
+// seats modelled the round is exact before the bet, so Low/Medium/High
+// graded nothing, and it ranked a won Double (twice a plain win's pay)
+// as Medium, below a stand-pat win. PlayMyRound()/AdvisePreDealBet()
+// below return the round's payout and a Max/Min bet with an amount.
+//
 // Session 10 addendum -- the isLastSeatBeforeDealer fallback above was
 // itself too blunt and caused two more live bug reports. (1) Hard 12
 // (K,2) with a known next card of King (a certain bust) was advised Hit:
@@ -811,6 +817,8 @@ namespace BlackjackDeckSim
 	{
 		bool trustworthy = false; // false means the caller must fall back to the textbook pair chart instead of trusting shouldSplit
 		bool shouldSplit = false;
+		std::int32_t splitValue = 0;   // bet units won (negative: lost) across both split hands
+		std::int32_t noSplitValue = 0; // bet units won playing the pair as one hand (2 once doubled)
 	};
 
 	// See this file's own header comment (Session 11 addendum) for the
@@ -880,6 +888,8 @@ namespace BlackjackDeckSim
 
 		result.trustworthy = true;
 		result.shouldSplit = splitValue > noSplitValue;
+		result.splitValue = splitValue;
+		result.noSplitValue = noSplitValue;
 		return result;
 	}
 
@@ -890,79 +900,6 @@ namespace BlackjackDeckSim
 		bool canDouble, bool isLastSeatBeforeDealer)
 	{
 		return EvaluateSplit(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount,
-			canDouble, SeatsAfterFromFlag(isLastSeatBeforeDealer));
-	}
-
-	// Session 13 addition -- Betting Advice. Answers "how strongly does
-	// the CURRENT hand favor the player, in bet-sizing terms" by playing
-	// the hand out with the engine's own best advice (PlayHandOut(), the
-	// same helper EvaluateSplit() above already uses for its own
-	// "what actually happens" comparison) and comparing the result to the
-	// dealer's own simulated final hand. High confidence: an immediate
-	// natural blackjack (resolves against the dealer's own already-dealt
-	// two cards -- real data, not a guess, see BlackjackCheat.cpp's file
-	// header, Session 4 -- with no draw-out needed on either side, so
-	// it's exact regardless of isLastSeatBeforeDealer) or a win reached by
-	// simply standing on the hand as dealt (PlayHandOut() consumed no
-	// extra cards to get there). Medium: a win that only materializes by
-	// hitting/doubling into it -- the "could win it if the cards advance"
-	// case. Low: anything that ends in a push or a loss. Same
-	// dealerOutcomeTrustworthy precondition as DetermineCheatAction()/
-	// EvaluateSplit() above -- when it doesn't hold, `trustworthy` comes
-	// back false and the caller must fall back to
-	// BlackjackHandEval::EstimateBettingConfidence() (a rough,
-	// non-deck-derived heuristic) instead of trusting `confidence`.
-	struct BettingAdvice
-	{
-		bool trustworthy = false;
-		Outcome outcome = Outcome::Push;
-		BlackjackHandEval::BettingConfidence confidence = BlackjackHandEval::BettingConfidence::Low;
-	};
-
-	inline BettingAdvice EvaluateBettingConfidence(
-		const std::int32_t* playerRanks, std::int32_t playerCount,
-		const std::int32_t* dealerRanks, std::int32_t dealerCount,
-		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDouble, const SeatsAfter& after)
-	{
-		BettingAdvice result;
-
-		BlackjackHandEval::HandValue playerNow = BlackjackHandEval::EvaluateHand(playerRanks, playerCount);
-		BlackjackHandEval::HandValue dealerNow = BlackjackHandEval::EvaluateHand(dealerRanks, dealerCount);
-
-		if (playerNow.blackjack)
-		{
-			result.trustworthy = true;
-			result.outcome = dealerNow.blackjack ? Outcome::Push : Outcome::Win;
-			result.confidence = (result.outcome == Outcome::Win) ? BlackjackHandEval::BettingConfidence::High : BlackjackHandEval::BettingConfidence::Low;
-			return result;
-		}
-
-		bool dealerOutcomeTrustworthy = after.known || dealerNow.total >= 17;
-		if (!dealerOutcomeTrustworthy)
-			return result;
-
-		PlayoutResult played = PlayHandOut(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount, canDouble, after);
-		DealerSimResult dealerFinal = SimulateSeatsThenDealer(dealerRanks, dealerCount, after, futureRanks + played.consumed, futureCount - played.consumed);
-
-		result.trustworthy = true;
-		result.outcome = CompareOutcome(played.value, dealerFinal.value);
-
-		if (result.outcome == Outcome::Win)
-			result.confidence = (played.consumed == 0) ? BlackjackHandEval::BettingConfidence::High : BlackjackHandEval::BettingConfidence::Medium;
-		else
-			result.confidence = BlackjackHandEval::BettingConfidence::Low; // push or loss
-
-		return result;
-	}
-
-	inline BettingAdvice EvaluateBettingConfidence(
-		const std::int32_t* playerRanks, std::int32_t playerCount,
-		const std::int32_t* dealerRanks, std::int32_t dealerCount,
-		const std::int32_t* futureRanks, std::int32_t futureCount,
-		bool canDouble, bool isLastSeatBeforeDealer)
-	{
-		return EvaluateBettingConfidence(playerRanks, playerCount, dealerRanks, dealerCount, futureRanks, futureCount,
 			canDouble, SeatsAfterFromFlag(isLastSeatBeforeDealer));
 	}
 
@@ -1069,29 +1006,83 @@ namespace BlackjackDeckSim
 		return ai;
 	}
 
-	// The pre-deal betting decision, made from nothing but the freshly
+	// My seat's result for the round, in half bets so a natural's 3:2
+	// fits: +3 natural (func_1062 pays floor(2.5 * bet)), +2 win, +4 a
+	// won double or two won split hands, 0 push, -2 loss, -4 a lost
+	// double or two lost split hands. stakeUnits is how many bets that
+	// line puts on the table: 2 once it doubles or splits (a split hand
+	// can't double, so never more). exact is false only when the deck
+	// can't settle the round.
+	struct RoundPlan
+	{
+		bool exact = false;
+		bool natural = false; // paid 3:2 -- netHalfUnits is +3
+		std::int32_t netHalfUnits = 0;
+		std::int32_t stakeUnits = 1;
+	};
+
+	// My hand's round from its first decision, following the advice
+	// DetermineFullAdvice() will show: split when EvaluateSplit() says
+	// so, otherwise play the hand out. canAffordSecondBet false rules
+	// out both Double and Split (the game needs the bet again in the
+	// bankroll for either -- func_1237's `f_1 >= f_4[h]`).
+	inline RoundPlan PlayMyRound(const std::int32_t* myRanks, const std::int32_t* dealerRanks,
+		const std::int32_t* futureRanks, std::int32_t futureCount, bool canAffordSecondBet, const SeatsAfter& after)
+	{
+		RoundPlan plan;
+		const BlackjackHandEval::HandValue mine = BlackjackHandEval::EvaluateHand(myRanks, 2);
+		const BlackjackHandEval::HandValue dealer = BlackjackHandEval::EvaluateHand(dealerRanks, 2);
+
+		// Either natural ends the round with nobody drawing (SeatTakesTurn()).
+		if (mine.blackjack || dealer.blackjack)
+		{
+			plan.exact = true;
+			plan.natural = mine.blackjack && !dealer.blackjack;
+			plan.netHalfUnits = plan.natural ? 3 : (mine.blackjack ? 0 : -2);
+			return plan;
+		}
+
+		if (!after.known && dealer.total < 17)
+			return plan;
+
+		if (canAffordSecondBet && myRanks[0] == myRanks[1])
+		{
+			const SplitDecision split = EvaluateSplit(myRanks, 2, dealerRanks, 2, futureRanks, futureCount, /*canDouble*/ true, after);
+			if (split.trustworthy && split.shouldSplit)
+			{
+				plan.exact = true;
+				plan.netHalfUnits = 2 * split.splitValue;
+				plan.stakeUnits = 2;
+				return plan;
+			}
+		}
+
+		const PlayoutResult played = PlayHandOut(myRanks, 2, dealerRanks, 2, futureRanks, futureCount, canAffordSecondBet, after);
+		const DealerSimResult dealerFinal = SimulateSeatsThenDealer(dealerRanks, 2, after, futureRanks + played.consumed, futureCount - played.consumed);
+		plan.exact = true;
+		plan.netHalfUnits = 2 * StakedOutcomeValue(CompareOutcome(played.value, dealerFinal.value), played);
+		plan.stakeUnits = played.doubled ? 2 : 1;
+		return plan;
+	}
+
+	// The pre-deal round plan, made from nothing but the freshly
 	// shuffled deck (deckRanks[0] is the first card dealt), which seats
 	// will be dealt in, and my seat. Every other seat is an AI seat, so
 	// the whole round plays out off the deck: the seats before mine by the
 	// AI model, then my hand by the engine's own advice, then the seats
-	// after mine and the dealer (EvaluateBettingConfidence()). AI seats are
-	// assumed able to afford a second bet -- their bets aren't down yet.
-	// Before the AI model this fell back to a textbook estimate whenever
-	// another seat drew around mine -- every round of the first round log.
-	// Its round 5 (18 vs 14, a sure loss) showed Medium and cost $4.02.
-	// Returns Low if deckRanks doesn't even cover the initial deal.
-	inline BlackjackHandEval::BettingConfidence EvaluatePreDealBetting(
+	// after mine and the dealer (PlayMyRound()). AI seats are assumed
+	// able to afford a second bet -- their bets aren't down yet. Not exact
+	// if deckRanks doesn't even cover the initial deal.
+	inline RoundPlan EvaluatePreDealBetting(
 		const std::int32_t* deckRanks, std::int32_t deckCount,
-		const bool* seatDealt, std::int32_t mySeat)
+		const bool* seatDealt, std::int32_t mySeat, bool canAffordSecondBet = true)
 	{
-		using BlackjackHandEval::BettingConfidence;
-
 		if (mySeat < 0 || mySeat >= kSeatCount || !seatDealt[mySeat])
-			return BettingConfidence::Low;
+			return RoundPlan{};
 
 		const InitialDeal deal = DealRound(deckRanks, deckCount, seatDealt);
 		if (!deal.valid)
-			return BettingConfidence::Low;
+			return RoundPlan{};
 
 		const std::int32_t upcardRank = deal.dealerRanks[1];
 		std::int32_t cursor = deal.cursor;
@@ -1108,12 +1099,72 @@ namespace BlackjackDeckSim
 				after.Add(deal.seatCards[seat], 2, /*canAffordSecondBet*/ true);
 		}
 
-		const std::int32_t* myRanks = deal.seatCards[mySeat];
-		BettingAdvice advice = EvaluateBettingConfidence(myRanks, 2, deal.dealerRanks, 2,
-			deckRanks + cursor, deckCount - cursor, /*canDouble*/ true, after);
-		if (advice.trustworthy)
-			return advice.confidence;
-		return BlackjackHandEval::EstimateBettingConfidence(myRanks, 2, upcardRank);
+		return PlayMyRound(deal.seatCards[mySeat], deal.dealerRanks, deckRanks + cursor, deckCount - cursor, canAffordSecondBet, after);
+	}
+
+	// The table's bet limits in cents, uLocal_14.f_10.f_4/f_5 (func_948).
+	// The minimum is also the step every bet is rounded down to.
+	struct TableLimits
+	{
+		std::int32_t minBet = 0;
+		std::int32_t maxBet = 0;
+
+		bool Known() const { return minBet > 0 && maxBet >= minBet; }
+	};
+
+	enum class BetSize { Min, Max };
+
+	// The round log's and fixtures' spelling.
+	inline std::string_view BetSizeName(BetSize size)
+	{
+		return size == BetSize::Max ? "Max" : "Min";
+	}
+
+	struct PreDealBet
+	{
+		RoundPlan plan;
+		BetSize size = BetSize::Min;
+		std::int32_t amount = -1;      // cents to bet; -1 when the limits or bankroll are unknown
+		std::int32_t predictedNet = 0; // cents the round nets at `amount`
+	};
+
+	// The betting advice. The round's result is known before the bet, so
+	// there's no "confidence" to it: bet the most that still pays when the
+	// round wins, the least otherwise (a push gains nothing either way).
+	// A line that doubles or splits needs the bet twice, so its amount is
+	// capped at half the bankroll -- 2 x half the bankroll beats 1 x all
+	// of it. When the bankroll can't cover even two minimum bets, the
+	// game won't offer Double or Split, so the round is replayed without
+	// them. bankroll is in cents, before the bet.
+	inline PreDealBet AdvisePreDealBet(
+		const std::int32_t* deckRanks, std::int32_t deckCount,
+		const bool* seatDealt, std::int32_t mySeat,
+		std::int32_t bankroll, const TableLimits& limits)
+	{
+		PreDealBet bet;
+		bet.plan = EvaluatePreDealBetting(deckRanks, deckCount, seatDealt, mySeat);
+
+		const bool amountKnown = limits.Known() && bankroll >= limits.minBet;
+		if (amountKnown && bet.plan.stakeUnits > 1 && bankroll / 2 < limits.minBet)
+			bet.plan = EvaluatePreDealBetting(deckRanks, deckCount, seatDealt, mySeat, /*canAffordSecondBet*/ false);
+
+		bet.size = (bet.plan.exact && bet.plan.netHalfUnits > 0) ? BetSize::Max : BetSize::Min;
+		if (!amountKnown)
+			return bet;
+
+		if (bet.size == BetSize::Max)
+		{
+			std::int32_t amount = bankroll / bet.plan.stakeUnits;
+			if (amount > limits.maxBet)
+				amount = limits.maxBet;
+			bet.amount = amount - amount % limits.minBet;
+		}
+		else
+		{
+			bet.amount = limits.minBet;
+		}
+		bet.predictedNet = bet.plan.natural ? bet.amount + bet.amount / 2 : bet.plan.netHalfUnits * bet.amount / 2;
+		return bet;
 	}
 
 	// Replays a finished round's dealer hand off its deck: the deal, every

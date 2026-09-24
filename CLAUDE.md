@@ -179,10 +179,11 @@ at 4 MB to `.1.jsonl`. Each round writes one `decision` line per advice shown
 and one `round` line at round end. The round line holds the deck, dealt
 seats, betting advice, final hands, won/lost, bankroll, and the dealer's
 predicted vs actual draw-out. To pin a real hand as a regression test, copy
-its line into `tests/fixtures/rounds.jsonl` and add `"expectBetting"`,
+its line into `tests/fixtures/rounds.jsonl` and add `"expectBetting"`
+(`Max`/`Min`, optionally `"expectBettingNet"`/`"expectBetAmount"`),
 `"expectDealer"` (a copy of the line's `dealerRanks`; checks the AI-seat
 replay) or `"expectAction"`. `BlackjackDeckSimTests` replays every such line through
-`EvaluatePreDealBetting()`/`DetermineFullAdvice()`, the same pure functions
+`AdvisePreDealBet()`/`DetermineFullAdvice()`, the same pure functions
 the mod calls. Format: `src/RoundRecord.h`.
 
 In-game (Debug build only): press F11 for the test menu (NUMPAD 8/2 move,
@@ -343,3 +344,8 @@ untested live, all with the Debug build and the round log running:
 5. Play two rounds in one sitting and F11 -> "Probe Table Struct" in each:
    does the round-phase enum (`table.f_702`) go back to 2/3/7/8, or keep
    climbing?
+6. Bet limits (Session 20, static trace only): every round line logs
+   `tableMinBet`/`tableMaxBet` (`uLocal_14.f_10.f_4`/`f_5`). Check them
+   against the game's bet dial (lowest and highest bet it allows). If
+   they're wrong, the BET MAX/MIN amount is wrong; the Max/Min choice
+   itself doesn't use them.

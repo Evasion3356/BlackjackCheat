@@ -1843,3 +1843,51 @@ Follow-up, same session:
   hand and net. First test (user doubled A,9 vs A,6 against Stand
   advice) was before this existed. Unconfirmed: whether a Double's bet
   update lands in the same tick as its card (if not, it logs as Hit).
+
+## Session 20 -- betting advice becomes Max/Min with an amount
+
+The second round log (14 rounds, seat 3, 17 decisions) was all correct:
+every play matched a brute-force search over the deck, every
+`dealerPredictionMatch` was true, and every Low was a loss/push and every
+Medium/High a win. The problem was the scale itself. With the AI seats
+modelled the round is exact before the bet, so there's no confidence to
+grade, and Medium (a win that needs a hit) was a Double win all 4 times
+-- the best-paying round -- which the user bet small on: rounds 6, 11 and
+13 won $6.36 instead of about $25.90.
+
+- **`PlayMyRound()` / `EvaluatePreDealBetting()`** return a `RoundPlan`:
+  the round's payout in half bets (natural +3, since `func_1062` pays
+  `floor(2.5 * bet)`; win +2; won double or two won split hands +4; push
+  0; loss -2) and `stakeUnits` (2 when the line doubles or splits; no
+  double after a split, so never more). The pre-deal play-out now splits
+  when `EvaluateSplit()` would (`SplitDecision` exposes `splitValue`/
+  `noSplitValue`); before, a pair that only wins by splitting showed Low.
+  Either natural ends the round with nobody drawing.
+- **`AdvisePreDealBet()`**: Max when the payout is positive, else Min.
+  Amount: Min = the table minimum; Max = min(bankroll / stakeUnits, max),
+  rounded down to the minimum (the bet step, per `func_948`). Half the
+  bankroll keeps the double/split affordable (`func_1237`'s `f_1 >=
+  f_4[h]`); 2 x half always beats 1 x all. When even two minimum bets
+  aren't affordable the round is replayed without Double/Split.
+- **Bet limits: `uLocal_14.f_10.f_4` (min/step) and `f_5` (max). Static
+  trace only.** `func_225` (the betting state, registered via
+  `func_224(uParam0, 2, &func_225)`) passes `&uParam1->f_10` with
+  `uParam1->f_9` as the seat, and `f_9` is `kMySeatField`, so `uParam1`
+  is `uLocal_14`. `func_948` sets the dial's range to
+  `min(bankroll, f_4)`..`min(bankroll, f_5)`, each rounded down to a
+  multiple of `f_4`. Slots 28/29. The log's bets were all multiples of
+  2 cents and went up to $5.00, consistent with 2/500 but not proof.
+  Round lines now log `tableMinBet`/`tableMaxBet`, plus `bettingNet`,
+  `bettingStake`, `betAdvised` and `bettingPredictedNet`.
+- **HUD**: "BET MAX $2.94 (+$5.88)" green / "BET MIN $0.02" red; just the
+  label if the limits read as unset; nothing if the deck can't settle
+  the round (only when the deal itself can't be read).
+  `EstimateBettingConfidence()`, `BettingConfidence` and their tests were
+  removed; the Localization table is now `kBetSizeLabels`.
+- Fixtures: old `expectBetting` values mapped High/Medium -> Max, Low ->
+  Min; rounds 6, 11 and 13 of this log added with
+  `"expectBettingNet":4`.
+
+**To confirm live:** check `tableMinBet`/`tableMaxBet` against the bet
+dial's real range, and that betting the advised amount on a Max-double
+round still offers Double.

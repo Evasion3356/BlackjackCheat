@@ -7,6 +7,16 @@ tracks what an end user experiences, not internal implementation history
 
 ## [Unreleased]
 
+### Changed
+- Betting advice is now BET MAX or BET MIN with the amount to bet and
+  what the round will win, e.g. "BET MAX $2.94 (+$5.88)". Since the mod
+  plays out the whole round from the deck, the result is known before
+  you bet, so Low/Medium/High no longer meant anything. Worse, Medium
+  was usually a Double win, which pays twice a normal win, and got bet
+  small. When the winning play doubles or splits, the amount is half
+  your bankroll (up to the table max), so you can still afford it.
+  Betting advice now also accounts for splits and the 3:2 blackjack payout.
+
 ### Fixed
 - The mod now plays out the other (AI) seats with the game's own
   decision table, so hit/stand/double/split and betting advice use the

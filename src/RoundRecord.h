@@ -37,9 +37,12 @@
 	the plain-text "deck"/"cards"/"dealer" strings are for reading only.
 
 	To turn a line into a test: copy it into tests/fixtures/rounds.jsonl
-	and add "expectBetting":"Low" and/or "expectDealer":[...] (round lines;
-	expectDealer is the dealer's real final ranks, i.e. a copy of
-	dealerRanks) or "expectAction":"Stand" (decision lines). Lines with no expect* key are skipped.
+	and add "expectBetting":"Max" (or "Min"; optionally "expectBettingNet",
+	the round's payout in half bets, and "expectBetAmount" in cents, which
+	uses the line's bankrollBeforeRound/tableMinBet/tableMaxBet) and/or
+	"expectDealer":[...] (round lines; expectDealer is the dealer's real
+	final ranks, i.e. a copy of dealerRanks) or "expectAction":"Stand"
+	(decision lines). Lines with no expect* key are skipped.
 
 	The reader below only understands this file's own flat format (a
 	top-level key's int, bool, string or int array) -- not general JSON.

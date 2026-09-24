@@ -30,9 +30,6 @@ namespace
 	using BlackjackDeckSim::EvaluateSplit;
 	using BlackjackDeckSim::PlayHandOut;
 	using BlackjackDeckSim::SplitDecision;
-	using BlackjackDeckSim::EvaluateBettingConfidence;
-	using BlackjackDeckSim::BettingAdvice;
-	using Confidence = BlackjackHandEval::BettingConfidence;
 
 	int g_failures = 0;
 
@@ -737,114 +734,149 @@ namespace
 			"15+2=17 should stop after exactly one draw, not keep drawing into the trailing 9s");
 	}
 
-	// Session 13 addition -- Betting Advice's deck-derived path
-	// (EstimateBettingConfidence()'s own non-deck-derived fallback is
-	// tested in tests/BlackjackHandEvalTests.cpp). A natural blackjack
-	// resolves immediately against the dealer's own already-dealt two
-	// cards -- exact and trustworthy regardless of isLastSeatBeforeDealer
-	// or the future deck, since neither side draws.
-	void TestBettingConfidenceNaturalBlackjackIsHigh()
+	// Betting advice. The round's result is known before the bet, so
+	// PlayMyRound() returns it as a payout in half bets (a natural's 3:2
+	// is +3) plus how many bets the line needs on the table, and
+	// AdvisePreDealBet() turns that into a bet: the most that still pays
+	// on a win, the least otherwise. Replaced Low/Medium/High, which
+	// ranked a won Double -- the best-paying line -- below a plain win:
+	// three Medium rounds of the second round log were double wins bet
+	// small, about $19 left on the table (see tests/fixtures/rounds.jsonl).
+	using BlackjackDeckSim::RoundPlan;
+	using BlackjackDeckSim::PlayMyRound;
+	using BlackjackDeckSim::TableLimits;
+	using BlackjackDeckSim::BetSize;
+	using BlackjackDeckSim::PreDealBet;
+	using BlackjackDeckSim::AdvisePreDealBet;
+
+	const BlackjackDeckSim::SeatsAfter kNoSeatsAfter{};
+
+	void TestRoundPlanNaturals()
 	{
-		std::printf("TestBettingConfidenceNaturalBlackjackIsHigh:\n");
+		std::printf("TestRoundPlanNaturals:\n");
 
-		std::int32_t player[2] = { 14, 10 }; // A,10 = natural 21
-		std::int32_t dealer[2] = { 2, 3 }; // 5, not a blackjack, still needs to hit
-		std::int32_t future[1] = { 0 }; // unused -- must never be read for this immediate case
+		const std::int32_t natural[2] = { 14, 10 };
+		const std::int32_t dealerFive[2] = { 2, 3 };
+		RoundPlan plan = PlayMyRound(natural, dealerFive, nullptr, 0, true, BlackjackDeckSim::SeatsAfter::Unknown());
+		Check(plan.exact && plan.natural && plan.netHalfUnits == 3 && plan.stakeUnits == 1, "a natural pays 3:2 (+3 half bets), exact even with seats unknown",
+			"nobody draws once a natural is dealt; func_1062 pays floor(2.5 * bet)");
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 0, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ false);
-		Check(advice.trustworthy, "a natural blackjack is trustworthy even with another seat still to act and a dealer that hasn't finished",
-			"neither side draws when the player already has blackjack -- it resolves against the dealer's own already-dealt two cards immediately");
-		Check(advice.outcome == Outcome::Win, "a natural blackjack against a non-blackjack dealer is a Win", "21 on the first two cards beats anything except a matching dealer blackjack");
-		Check(advice.confidence == Confidence::High, "a natural blackjack is always High confidence", "the strongest possible starting hand");
+		const std::int32_t dealerNatural[2] = { 14, 12 };
+		plan = PlayMyRound(natural, dealerNatural, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && !plan.natural && plan.netHalfUnits == 0, "natural vs natural pushes", "0, not a 3:2 win");
+
+		const std::int32_t hardEleven[2] = { 5, 6 };
+		const std::int32_t ten[1] = { 10 };
+		plan = PlayMyRound(hardEleven, dealerNatural, ten, 1, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == -2 && plan.stakeUnits == 1, "a dealer natural beats 11 even with a 10 next",
+			"the round ends at the deal -- I never get to draw the 10");
 	}
 
-	// Two natural blackjacks push -- Low confidence, not a Win.
-	void TestBettingConfidenceBothBlackjackIsPush()
+	void TestRoundPlanStandPatResults()
 	{
-		std::printf("TestBettingConfidenceBothBlackjackIsPush:\n");
+		std::printf("TestRoundPlanStandPatResults:\n");
 
-		std::int32_t player[2] = { 14, 10 };
-		std::int32_t dealer[2] = { 14, 12 }; // A,Q = also a natural 21
+		const std::int32_t nineteen[2] = { 10, 9 };
+		const std::int32_t eighteen[2] = { 10, 8 };
+		const std::int32_t dealerSeventeen[2] = { 10, 7 };
+		const std::int32_t dealerNineteen[2] = { 10, 9 };
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, nullptr, 0, true, false);
-		Check(advice.trustworthy, "both-blackjack is still an immediate, trustworthy resolution", "same short-circuit as the single-blackjack case");
-		Check(advice.outcome == Outcome::Push, "two natural blackjacks push", "neither side has a stronger 21 than the other");
-		Check(advice.confidence == Confidence::Low, "a push is Low confidence, not High, even off a natural blackjack", "a push doesn't favor betting more, regardless of how the hand got there");
+		RoundPlan plan = PlayMyRound(nineteen, dealerSeventeen, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 2 && plan.stakeUnits == 1, "19 vs a pat 17 wins one bet", "+2 half bets");
+		plan = PlayMyRound(nineteen, dealerNineteen, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 0, "19 vs 19 pushes", "0");
+		plan = PlayMyRound(eighteen, dealerNineteen, nullptr, 0, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == -2, "18 vs a pat 19 loses one bet", "-2 half bets");
+
+		const std::int32_t dealerFive[2] = { 2, 3 };
+		const std::int32_t five[1] = { 5 };
+		plan = PlayMyRound(nineteen, dealerFive, five, 1, true, BlackjackDeckSim::SeatsAfter::Unknown());
+		Check(!plan.exact, "a drawing dealer with unknown seats after mine isn't exact", "the caller shows no betting advice");
 	}
 
-	// Without a natural blackjack, the same dealerOutcomeTrustworthy
-	// precondition DetermineCheatAction()/EvaluateSplit() need applies
-	// here too -- a dealer that still needs to hit, with another seat
-	// still to act, means the future deck can't be trusted at all.
-	void TestBettingConfidenceNotTrustworthyWithoutBlackjack()
+	// Live round 6 of the second round log: Q,5 vs the dealer's 4,10
+	// (14), 6 then 10 next. Doubling makes 21 and the dealer busts on
+	// the 10 -- two bets won, and it was shown as Medium.
+	void TestRoundPlanDoubleWinIsTwoBets()
 	{
-		std::printf("TestBettingConfidenceNotTrustworthyWithoutBlackjack:\n");
+		std::printf("TestRoundPlanDoubleWinIsTwoBets:\n");
 
-		std::int32_t player[2] = { 10, 6 }; // hard 16, not blackjack
-		std::int32_t dealer[2] = { 2, 3 }; // 5, must hit
-		std::int32_t future[1] = { 5 };
+		const std::int32_t player[2] = { 12, 5 };
+		const std::int32_t dealer[2] = { 4, 10 };
+		const std::int32_t future[2] = { 6, 10 };
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 1, true, /*isLastSeatBeforeDealer*/ false);
-		Check(!advice.trustworthy, "a dealer that still needs to hit, with another seat still to act, can't be trusted",
-			"same precondition as DetermineCheatAction()/EvaluateSplit() -- the caller must fall back to the textbook heuristic instead");
+		RoundPlan plan = PlayMyRound(player, dealer, future, 2, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 4 && plan.stakeUnits == 2, "a won double is +4 half bets on two bets",
+			"double pays twice a plain win");
+
+		plan = PlayMyRound(player, dealer, future, 2, /*canAffordSecondBet*/ false, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 2 && plan.stakeUnits == 1, "without a second bet the same card is a plain hit win",
+			"hitting once draws the same 6 a double would");
 	}
 
-	// A win reached by simply standing on the hand as dealt (the dealer
-	// is already pat, so PlayHandOut() never needs to consume a future
-	// card) is High confidence -- the "blackjack/high probability of
-	// winning" case from the user's own description, even without an
-	// actual natural blackjack.
-	void TestBettingConfidenceStandPatWinIsHigh()
+	// 8,8 vs a pat 17 with 10, 10 next: unsplit it's 16, and hitting
+	// busts, so it loses; split, both hands make 18 and win.
+	void TestRoundPlanSplitWinIsTwoBets()
 	{
-		std::printf("TestBettingConfidenceStandPatWinIsHigh:\n");
+		std::printf("TestRoundPlanSplitWinIsTwoBets:\n");
 
-		std::int32_t player[2] = { 10, 9 }; // hard 19
-		std::int32_t dealer[2] = { 10, 7 }; // already 17, stands pat
+		const std::int32_t eights[2] = { 8, 8 };
+		const std::int32_t dealer[2] = { 10, 7 };
+		const std::int32_t future[2] = { 10, 10 };
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, nullptr, 0, true, false);
-		Check(advice.trustworthy, "a dealer already pat at 17 is trustworthy regardless of other seats", "same short-circuit DetermineCheatAction() itself already uses");
-		Check(advice.outcome == Outcome::Win, "hard 19 already beats a dealer pat at 17", "19 > 17, no draw needed on either side");
-		Check(advice.confidence == Confidence::High, "a win with no extra hits needed is High confidence", "the hand as already dealt already wins outright");
+		RoundPlan plan = PlayMyRound(eights, dealer, future, 2, true, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == 4 && plan.stakeUnits == 2, "splitting 8,8 into two 18s wins two bets",
+			"the old betting advice never split, so it showed this round as a loss");
+
+		plan = PlayMyRound(eights, dealer, future, 2, /*canAffordSecondBet*/ false, kNoSeatsAfter);
+		Check(plan.exact && plan.netHalfUnits == -2 && plan.stakeUnits == 1, "without a second bet 8,8 can't split and loses",
+			"16 vs 17, and the 10 busts it");
 	}
 
-	// A win that only materializes by hitting/doubling into it is Medium
-	// -- exactly the user's own "could win it if the cards advance/double
-	// down on the right card" description. Reuses the same known-winning
-	// double scenario as TestKnownWinningCardIsDouble above (hard 11,
-	// known next card makes 21).
-	void TestBettingConfidenceWinViaDoubleIsMedium()
+	// Only my seat (0) dealt in: my 5,6, the dealer's 10,5, then 10, 3.
+	// I double into 21, the dealer draws the 3 to 18.
+	const bool kOnlySeatZero[4] = { true, false, false, false };
+	const std::int32_t kDoubleWinDeck[6] = { 5, 6, 10, 5, 10, 3 };
+
+	void TestBetAmountForADoubleWin()
 	{
-		std::printf("TestBettingConfidenceWinViaDoubleIsMedium:\n");
+		std::printf("TestBetAmountForADoubleWin:\n");
 
-		std::int32_t player[2] = { 5, 6 }; // hard 11
-		std::int32_t dealer[2] = { 10, 5 }; // 15, must hit
-		std::int32_t future[2] = { 10, 3 }; // player doubles into 21; dealer's own subsequent draw makes 18
+		const TableLimits limits{ 2, 500 };
+		PreDealBet bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 2000, limits);
+		Check(bet.size == BetSize::Max && bet.amount == 500 && bet.predictedNet == 1000, "a double win with a big bankroll bets the table max",
+			"$20.00 covers two $5.00 bets; the double wins $10.00");
 
-		BettingAdvice advice = EvaluateBettingConfidence(player, 2, dealer, 2, future, 2, /*canDouble*/ true, /*isLastSeatBeforeDealer*/ true);
-		Check(advice.trustworthy, "last seat before the dealer makes this trustworthy", "same precondition as DetermineCheatAction()");
-		Check(advice.outcome == Outcome::Win, "doubling the known next card into 21 beats the dealer's resulting 18", "11+10=21 vs 15+3=18");
-		Check(advice.confidence == Confidence::Medium, "a win reached only by doubling into it is Medium, not High",
-			"the win only exists because of the known upcoming card, not the hand as already dealt -- \"could win it if the cards advance\"");
+		bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 590, limits);
+		Check(bet.size == BetSize::Max && bet.amount == 294 && bet.predictedNet == 588, "a double win bets half the bankroll when that's under the max",
+			"$5.90 bankroll: $2.94 (rounded down to the 2-cent step) still leaves the double; betting it all would forfeit it");
+
+		bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 3, limits);
+		Check(bet.size == BetSize::Max && bet.plan.stakeUnits == 1 && bet.amount == 2 && bet.predictedNet == 2,
+			"when two minimum bets aren't affordable the round is replayed without the double",
+			"3 cents can't cover 2 x 2 cents, so it's a plain hit win on one 2-cent bet");
+
+		bet = AdvisePreDealBet(kDoubleWinDeck, 6, kOnlySeatZero, 0, 2000, TableLimits{});
+		Check(bet.size == BetSize::Max && bet.amount == -1, "unknown limits still say Max, with no amount", "the HUD shows just the label");
 	}
 
-	// Push and loss both bucket to Low -- neither favors betting more.
-	void TestBettingConfidencePushAndLossAreBothLow()
+	void TestBetAmountForLossesAndNaturals()
 	{
-		std::printf("TestBettingConfidencePushAndLossAreBothLow:\n");
+		std::printf("TestBetAmountForLossesAndNaturals:\n");
 
-		std::int32_t pushPlayer[2] = { 10, 9 }; // hard 19
-		std::int32_t pushDealer[2] = { 10, 9 }; // also 19, stands pat
-		BettingAdvice pushAdvice = EvaluateBettingConfidence(pushPlayer, 2, pushDealer, 2, nullptr, 0, true, false);
-		Check(pushAdvice.trustworthy, "dealer already pat is trustworthy regardless of other seats", "same short-circuit as every other pat-dealer case");
-		Check(pushAdvice.outcome == Outcome::Push, "identical stand-pat totals push", "19 vs 19");
-		Check(pushAdvice.confidence == Confidence::Low, "a push is Low confidence", "no reason to bet more on a hand that only ties");
+		const TableLimits limits{ 2, 500 };
+		const std::int32_t lossDeck[4] = { 10, 8, 10, 9 }; // 18 vs a pat 19
+		PreDealBet bet = AdvisePreDealBet(lossDeck, 4, kOnlySeatZero, 0, 2000, limits);
+		Check(bet.size == BetSize::Min && bet.amount == 2 && bet.predictedNet == -2, "a loss bets the minimum", "18 vs 19");
 
-		std::int32_t lossPlayer[2] = { 10, 8 }; // hard 18
-		std::int32_t lossDealer[2] = { 10, 9 }; // 19, stands pat, already beats 18
-		BettingAdvice lossAdvice = EvaluateBettingConfidence(lossPlayer, 2, lossDealer, 2, nullptr, 0, true, false);
-		Check(lossAdvice.trustworthy, "dealer already pat is trustworthy regardless of other seats", "same short-circuit as every other pat-dealer case");
-		Check(lossAdvice.outcome == Outcome::Loss, "hard 18 already loses to a dealer pat at 19", "18 < 19, and this hand's own best line (Stand) can't change that");
-		Check(lossAdvice.confidence == Confidence::Low, "a loss is Low confidence", "no reason to bet more on a hand that's already losing");
+		const std::int32_t pushDeck[4] = { 10, 9, 10, 9 };
+		bet = AdvisePreDealBet(pushDeck, 4, kOnlySeatZero, 0, 2000, limits);
+		Check(bet.size == BetSize::Min && bet.amount == 2 && bet.predictedNet == 0, "a push bets the minimum", "nothing to gain either way");
+
+		const std::int32_t naturalDeck[4] = { 14, 13, 10, 7 };
+		bet = AdvisePreDealBet(naturalDeck, 4, kOnlySeatZero, 0, 301, limits);
+		Check(bet.size == BetSize::Max && bet.amount == 300 && bet.predictedNet == 450, "a natural bets all it can, one bet",
+			"no double needed, so the whole (step-rounded) bankroll; pays floor(2.5 * 300) - 300 = 450");
 	}
 
 	void TestOutcomeRanking()
@@ -887,7 +919,7 @@ namespace
 	// EvaluatePreDealBetting(): a lower seat dealt a natural never draws,
 	// so it doesn't make my own cards unknown. Live report: seat 0 A,K,
 	// me (seat 1) 9,Q = 19, seat 3 2,3, dealer K,10 = 20, Q next -- the
-	// exact answer is Low (standing loses, hitting busts), but counting
+	// exact answer is a loss (standing loses, hitting busts), but counting
 	// seat 0 as "draws first" fell back to the textbook estimate, Medium.
 	// Also recorded in tests/fixtures/rounds.jsonl; this pins the rule
 	// itself, with a control where seat 0 has no natural.
@@ -897,14 +929,14 @@ namespace
 
 		const bool seatsDealt[4] = { true, true, false, true };
 		const std::int32_t deck[14] = { 14, 13, 9, 12, 2, 3, 13, 10, 12, 2, 3, 11, 6, 8 };
-		Check(BlackjackDeckSim::EvaluatePreDealBetting(deck, 14, seatsDealt, 1) == Confidence::Low,
-			"19 vs a dealer 20 with a Q next is Low when the seat before mine has a natural",
+		Check(BlackjackDeckSim::EvaluatePreDealBetting(deck, 14, seatsDealt, 1).netHalfUnits == -2,
+			"19 vs a dealer 20 with a Q next is a loss when the seat before mine has a natural",
 			"a natural never draws, so my own cards are exact -- stand loses, hit busts");
 
 		const std::int32_t deckNoNatural[14] = { 10, 6, 9, 12, 2, 3, 13, 10, 12, 2, 3, 11, 6, 8 };
-		Check(BlackjackDeckSim::EvaluatePreDealBetting(deckNoNatural, 14, seatsDealt, 1) == Confidence::Medium,
+		Check(BlackjackDeckSim::EvaluatePreDealBetting(deckNoNatural, 14, seatsDealt, 1).netHalfUnits == 4,
 			"with a drawing seat before mine, the AI model plays it first: seat 0's 16 vs a 10 hits the Q and busts",
-			"then my 19 hits the known 2 to 21 and beats the dealer's 20 -- a win by hitting, Medium");
+			"then my 19 doubles on the known 2 to 21 and beats the dealer's 20 -- two bets won");
 	}
 
 	// func_623 transcription sanity: every row is empty (func_623's
@@ -994,11 +1026,6 @@ namespace
 			"control: ignoring the AI seat stands on 9", "the dealer would bust on the 10 only if nobody else drew it");
 	}
 
-	std::string_view ConfidenceName(Confidence confidence)
-	{
-		return confidence == Confidence::High ? "High" : (confidence == Confidence::Medium ? "Medium" : "Low");
-	}
-
 	std::string_view ActionName(Action action)
 	{
 		switch (action)
@@ -1014,7 +1041,7 @@ namespace
 	// BlackjackCheat_rounds.jsonl round log (Debug build) with an
 	// "expectBetting" (round lines) or "expectAction" (decision lines) key
 	// added by hand. Each line goes through the exact pure function the
-	// mod ran: EvaluatePreDealBetting() / DetermineFullAdvice(). See
+	// mod ran: AdvisePreDealBet() / DetermineFullAdvice(). See
 	// src/RoundRecord.h for the format. Lines without an expect* key, and
 	// blank or '#' lines, are skipped.
 	void TestRecordedRounds()
@@ -1080,12 +1107,38 @@ namespace
 				for (std::size_t i = 0; i < 4; i++)
 					seatsDealt[i] = seats[i] != 0;
 
+				// expectBetting: Max/Min. Optional expectBettingNet (the plan's
+				// half bets) and expectBetAmount (cents, needs the line's
+				// bankrollBeforeRound, tableMinBet and tableMaxBet).
 				if (hasBetting)
 				{
-					std::string_view got = ConfidenceName(BlackjackDeckSim::EvaluatePreDealBetting(deck.data(), static_cast<std::int32_t>(deck.size()), seatsDealt, mySeat));
-					const std::string detail = "expected betting " + expect + ", got " + std::string(got);
+					std::int32_t bankroll = -1;
+					BlackjackDeckSim::TableLimits limits;
+					RoundRecord::GetInt(line, "bankrollBeforeRound", bankroll);
+					RoundRecord::GetInt(line, "tableMinBet", limits.minBet);
+					RoundRecord::GetInt(line, "tableMaxBet", limits.maxBet);
+					const BlackjackDeckSim::PreDealBet bet = BlackjackDeckSim::AdvisePreDealBet(deck.data(), static_cast<std::int32_t>(deck.size()), seatsDealt, mySeat, bankroll, limits);
+
+					std::string_view got = bet.plan.exact ? BlackjackDeckSim::BetSizeName(bet.size) : "none";
+					std::string detail = "expected betting " + expect + ", got " + std::string(got);
 					Check(got == expect, (name + " [betting]").c_str(), detail.c_str());
 					checked++;
+
+					std::int32_t expectNet = 0;
+					if (RoundRecord::GetInt(line, "expectBettingNet", expectNet))
+					{
+						detail = "expected " + std::to_string(expectNet) + " half bets, got " + std::to_string(bet.plan.netHalfUnits);
+						Check(bet.plan.netHalfUnits == expectNet, (name + " [betting net]").c_str(), detail.c_str());
+						checked++;
+					}
+
+					std::int32_t expectAmount = 0;
+					if (RoundRecord::GetInt(line, "expectBetAmount", expectAmount))
+					{
+						detail = "expected a bet of " + std::to_string(expectAmount) + " cents, got " + std::to_string(bet.amount);
+						Check(bet.amount == expectAmount, (name + " [bet amount]").c_str(), detail.c_str());
+						checked++;
+					}
 				}
 
 				// expectDealer: the dealer's real final ranks. ReplayDealer()
@@ -1221,12 +1274,12 @@ int main()
 	TestFallbackKnownImprovementOverridesTextbookStand();
 	TestSplitCountsADoubledHandAsTwoUnits();
 	TestDealerSimulationStopsAtSeventeen();
-	TestBettingConfidenceNaturalBlackjackIsHigh();
-	TestBettingConfidenceBothBlackjackIsPush();
-	TestBettingConfidenceNotTrustworthyWithoutBlackjack();
-	TestBettingConfidenceStandPatWinIsHigh();
-	TestBettingConfidenceWinViaDoubleIsMedium();
-	TestBettingConfidencePushAndLossAreBothLow();
+	TestRoundPlanNaturals();
+	TestRoundPlanStandPatResults();
+	TestRoundPlanDoubleWinIsTwoBets();
+	TestRoundPlanSplitWinIsTwoBets();
+	TestBetAmountForADoubleWin();
+	TestBetAmountForLossesAndNaturals();
 	TestOutcomeRanking();
 	TestNaturalsBeatThreeCardTwentyOne();
 	TestPreDealBettingIgnoresALowerSeatNatural();

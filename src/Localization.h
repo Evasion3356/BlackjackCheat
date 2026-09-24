@@ -2,8 +2,8 @@
 	Localizes the handful of strings this mod actually draws on screen in
 	a Release build -- the HIT/STAND/DOUBLE/SPLIT advice readout
 	(ActionName(), see DrawAdviceStatus() in BlackjackCheat.cpp), the
-	BET LOW/MEDIUM/HIGH betting-advice readout (BettingConfidenceLabel(),
-	see DrawBettingAdviceStatus()), the Insurance YES/No readout (see
+	BET MAX/MIN betting-advice readout (BetSizeLabel(), see
+	DrawBettingAdviceStatus()), the Insurance YES/No readout (see
 	DrawInsuranceStatus()), and the "Next cards:" label (see
 	DrawNextCardStatus()). Everything else this mod draws (the Debug-only
 	text panel, DrawLine()/DrawPanel() in BlackjackCheat.cpp) is
@@ -25,7 +25,7 @@
 	Translations beyond English are LLM-assisted, not yet reviewed by a
 	native speaker per language -- if a wording is wrong for a given
 	language, fix the corresponding row in Localization.cpp's
-	kActionLabels/kBettingConfidenceLabels/kInsuranceLabels/
+	kActionLabels/kBetSizeLabels/kInsuranceLabels/
 	kNextCardsLabel tables directly, no other file needs to change.
 
 	$Font5 (this mod's text pipeline, see WrapBgFormatText()'s header
@@ -39,7 +39,8 @@
 
 #pragma once
 
-#include "BlackjackHandEval.h" // Action, BettingConfidence
+#include "BlackjackDeckSim.h" // BetSize
+#include "BlackjackHandEval.h" // Action
 #include <cstdint>
 #include <string_view>
 
@@ -93,9 +94,9 @@ namespace Localization
 	// language.
 	std::string_view ActionName(BlackjackHandEval::Action action);
 
-	// BET LOW/MEDIUM/HIGH betting-confidence readout. Uses Current() for
-	// the language.
-	std::string_view BettingConfidenceLabel(BlackjackHandEval::BettingConfidence confidence);
+	// BET MAX/MIN betting-advice label (the amount is appended by the
+	// caller). Uses Current() for the language.
+	std::string_view BetSizeLabel(BlackjackDeckSim::BetSize size);
 
 	// "Insurance: YES"/"Insurance: No" readout. Uses Current() for the
 	// language.
