@@ -5,6 +5,30 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.6.0] - 2026-09-24
+
+### Added
+- Bet hotkeys: Right/Left arrow raise/lower your bet 5 table-minimum
+  steps at a time (hold to repeat, speeding up like the game's own
+  Up/Down), and Tab jumps straight to the most the game lets you bet.
+  Their prompts ("-/+$X" and BET MAX) show beside the game's own. Not
+  shown for the insurance stake, and Alt+Tab doesn't trigger BET MAX.
+  New `BetHotkeys` key in `BlackjackCheat.ini` (default on) turns them
+  off entirely.
+
+### Changed
+- The mod is no longer strictly read-only: the bet hotkeys set the bet
+  amount directly (always within the game's own limits), because the
+  game's own bet controls top out at 200 steps a second. This is the only
+  thing the mod writes; `BetHotkeys=false` makes it read-only again.
+
+### Fixed
+- `ShowDealerHand=false` hides the dealer's cards again: the hole-card
+  icon after the deal and the dealer's predicted cards during betting.
+  It had stopped doing anything visible; the hole-card icon was only
+  controlled by `ShowDeckPrediction`. Your own "Next cards" and
+  predicted hand are unaffected.
+
 ## [1.5.0] - 2026-09-24
 
 ### Changed

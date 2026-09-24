@@ -24,7 +24,7 @@ namespace Config
 		// 7 removed card counting, was never a real field here and is
 		// actively dropped on the next Reload/save now -- see
 		// Config.cpp's ReloadImpl().
-		bool ShowDealerHand = true;
+		bool ShowDealerHand = true;     // Every dealer card icon: the real hole card (also needs ShowDeckPrediction) and the pre-deal predicted pair (also needs ShowCardsBeforeBet), plus the Debug panel's dealer lines. false hides the dealer's cards while leaving your own "Next cards"/predicted hand alone.
 		bool ShowBettingAdvice = true;  // Pre-deal BET MAX/MIN readout with the amount, drawn ABOVE ShowAdvice's own line -- see BlackjackCheat.cpp's DrawBettingAdviceStatus()/DetermineBettingAdvice() and BlackjackDeckSim::AdvisePreDealBet(). Own toggle, independent of ShowAdvice -- the user may want the hit/stand/double/split advice without the betting readout or vice versa.
 		bool ShowAdvice = true;         // hit/stand/double/split AND insurance -- see BlackjackCheat.cpp's DrawInsuranceStatus() call site
 		bool ShowDeckPrediction = true; // Release+Debug -- PRIMARY feature as of Session 4: dealer's real hole card icon + the "Next cards" 3-card-ahead preview, see BlackjackCheat.cpp's SimulateDealerOutcome()

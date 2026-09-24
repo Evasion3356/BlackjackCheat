@@ -2882,9 +2882,12 @@ namespace BlackjackCheat
 			// own.
 			if (cfg.ShowCardsBeforeBet && preDeal.valid)
 			{
-				std::string dealerStr = FormatHandCards(preDeal.dealerHand);
-				DrawLine(x, y, "Predicted dealer (before deal): " + dealerStr);
-				y += kLineHeight;
+				if (cfg.ShowDealerHand)
+				{
+					std::string dealerStr = FormatHandCards(preDeal.dealerHand);
+					DrawLine(x, y, "Predicted dealer (before deal): " + dealerStr);
+					y += kLineHeight;
+				}
 
 				if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
 				{
@@ -2934,7 +2937,11 @@ namespace BlackjackCheat
 			// before the card data itself is overwritten by the next
 			// deal) -- so this is exactly the same data DrawDealerHoleCardIcon()
 			// always drew, just kept visible a little longer.
-			if (cfg.ShowDeckPrediction && (dealerHand.count >= 2 || roundResolving))
+			// ShowDealerHand hides every dealer card icon (this one and the
+			// pre-deal pair below); ShowDeckPrediction/ShowCardsBeforeBet
+			// still gate them as before. Release had lost the 1.0 meaning
+			// of ShowDealerHand -- it only gated the Debug text line above.
+			if (cfg.ShowDealerHand && cfg.ShowDeckPrediction && (dealerHand.count >= 2 || roundResolving))
 				DrawDealerHoleCardIcon(dealerHand.ranks[0], dealerHand.suits[0]); // Session 7: index 0 is the real hole card, not index 1 -- see PredictedHand's header comment above
 
 			// Session 9: pre-bet deal prediction, Release+Debug -- both of
@@ -2952,11 +2959,13 @@ namespace BlackjackCheat
 			if (cfg.ShowCardsBeforeBet && preDeal.valid)
 			{
 #ifdef _DEBUG
-				DrawPredictedHandIcons(preDeal.dealerHand, cfg.HoleCardIconX, cfg.HoleCardIconY, -cfg.HoleCardIconWidth * 1.1f, cfg.HoleCardIconWidth, cfg.HoleCardIconHeight);
+				if (cfg.ShowDealerHand)
+					DrawPredictedHandIcons(preDeal.dealerHand, cfg.HoleCardIconX, cfg.HoleCardIconY, -cfg.HoleCardIconWidth * 1.1f, cfg.HoleCardIconWidth, cfg.HoleCardIconHeight);
 				if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
 					DrawPredictedHandIcons(preDeal.seatHands[mySeat], cfg.MyHandIconX, cfg.MyHandIconY, cfg.MyHandIconSpacingX, cfg.MyHandIconWidth, cfg.MyHandIconHeight);
 #else
-				DrawPredictedHandIcons(preDeal.dealerHand, kReleaseHoleCardIconX, kReleaseHoleCardIconY, -kReleaseHoleCardIconWidth * 1.1f, kReleaseHoleCardIconWidth, kReleaseHoleCardIconHeight);
+				if (cfg.ShowDealerHand)
+					DrawPredictedHandIcons(preDeal.dealerHand, kReleaseHoleCardIconX, kReleaseHoleCardIconY, -kReleaseHoleCardIconWidth * 1.1f, kReleaseHoleCardIconWidth, kReleaseHoleCardIconHeight);
 				if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
 					DrawPredictedHandIcons(preDeal.seatHands[mySeat], kReleaseMyHandIconX, kReleaseMyHandIconY, kReleaseMyHandIconSpacingX, kReleaseMyHandIconWidth, kReleaseMyHandIconHeight);
 #endif
