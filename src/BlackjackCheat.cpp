@@ -2259,7 +2259,9 @@ namespace BlackjackCheat
 			// (current-hand index) vs seat.f_59 (hand count) for my seat
 			// AND every occupied lower seat -- still a static trace only,
 			// so show the raw values live. Expect each seat to read
-			// f_3=0 while it waits/acts and f_3=f_59 once it's done.
+			// f_3=-1 while it waits (reset at round start), 0.. while it
+			// acts (the turn loop sets -1 -> 0 when the seat's turn
+			// begins) and f_3=f_59 once it's done.
 			{
 				std::string turnLine = "Turn f_3/f_59:";
 				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
@@ -2624,10 +2626,13 @@ namespace BlackjackCheat
 			// plays, so the window is over as soon as any card has been
 			// drawn past the initial deal (2 per dealt seat + 2 for the
 			// dealer -- the same deal shape SimulatePreDeal() uses and
-			// PreDealCheck confirmed live) or my own seat has moved on
-			// (stood without drawing, or split).
+			// PreDealCheck confirmed live) or my own seat's turn has
+			// started. Insurance is state 2 of the table's state machine
+			// (bjack_sp.ysc.c, the `f_2[1] == 14` branch), which runs
+			// BEFORE state 4 moves any seat's f_3 from -1 to 0 -- so
+			// during the prompt my f_3 still reads -1, never 0.
 			bool insuranceWindowOpen = false;
-			if (dealerHand.count == 2 && myHandCount == 1 && myCurrentHandIndex == 0 && myFirstHandCardCount == 2)
+			if (dealerHand.count == 2 && myHandCount == 1 && myCurrentHandIndex < 0 && myFirstHandCardCount == 2)
 			{
 				std::int32_t dealtSeats = 0;
 				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)

@@ -1759,8 +1759,12 @@ A full code review found, and this session fixed (see `docs/CHANGELOG.md`
   seat waits or acts and `1/1` once it's done (`2/2` after a split).
 - The insurance window is inferred from the deck cursor still sitting
   exactly at the end of the initial deal (2 cards per dealt seat + 2 for
-  the dealer). If insurance ever fails to show at the real prompt, check
-  the cursor at that moment with Probe Table Struct.
+  the dealer), and by my seat's `f_3` still reading -1: insurance is
+  state 2 of the table state machine, before state 4 sets the acting
+  seat's `f_3` from -1 to 0 (the first version of this check required
+  `f_3 == 0` and so could never fire). If insurance ever fails to show
+  at the real prompt, check the cursor at that moment with Probe Table
+  Struct.
 - `tests/BlackjackHandEvalTests.cpp`'s "hard 11 with 3 cards" case had
   been passing `count=3` with a 2-element array (out of bounds), which
   passed under MSVC by luck and failed under g++. Fixed with a real 3-card
