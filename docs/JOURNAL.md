@@ -1755,8 +1755,12 @@ A full code review found, and this session fixed (see `docs/CHANGELOG.md`
   requires every occupied lower seat to read `f_3 >= f_59` and my own
   `f_3 < f_59`. If `f_3` doesn't behave as traced, advice will never
   appear, which is easy to spot. The Debug panel now has a
-  "Turn f_3/f_59" line showing each seat's values: expect `0/1` while a
-  seat waits or acts and `1/1` once it's done (`2/2` after a split).
+  "Turn f_3/f_59" line showing each seat's values: expect `-1/1` while a
+  seat waits (reset at round start), `0/1` while it acts, and `1/1` once
+  it's done (`2/2` after a split). "Not done" is `f_3 < f_59`, the same
+  test `func_1063` uses for the table's case-4 "next seat to play" scan
+  (Session 5), so every seat the table plays -- naturals included --
+  reaches `f_3 == f_59` before the dealer's turn.
 - The insurance window is inferred from the deck cursor still sitting
   exactly at the end of the initial deal (2 cards per dealt seat + 2 for
   the dealer), and by my seat's `f_3` still reading -1: insurance is

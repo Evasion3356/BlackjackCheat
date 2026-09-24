@@ -2164,10 +2164,14 @@ namespace BlackjackCheat
 			// playing, it's not my turn -- its hits come off the cursor
 			// first, so "the next card is mine" (which every piece of
 			// advice below assumes) is false. seat.f_3 is the seat's
-			// current-hand index and reaches f_59 (its hand count) once
-			// the turn-advance loop has resolved all of its hands (see
-			// kSeatCurrentHandIndexOffset). A seat with no hands (0) isn't
-			// playing this round. Pre-deal, hasOccupiedLowerSeat alone is
+			// current-hand index: -1 while it waits (reset at round
+			// start), 0.. once the table's case 4 starts its turn, and
+			// f_59 (its hand count) once the turn-advance loop has
+			// resolved all of its hands (see kSeatCurrentHandIndexOffset).
+			// "Not done" below is f_3 < f_59 -- the same test func_1063
+			// uses for case 4's own "next seat to play" scan (Session 5),
+			// so it can't disagree with the game about whose turn it is.
+			// A seat with no hands (0) isn't playing this round. Pre-deal, hasOccupiedLowerSeat alone is
 			// what matters (every occupied lower seat is going to act
 			// first).
 			bool hasOccupiedLowerSeat = false;
@@ -2721,7 +2725,7 @@ namespace BlackjackCheat
 
 			Log::Write("  seat {} (base slot {}): occupiedMarker(f_0)={} handCount(f_59)={} currentHandIndex(f_3, Session 5)={}{}{}",
 				seat, seatBase, occupiedMarker, handCount, currentHandIndex,
-				(currentHandIndex < handCount) ? "  <-- still acting this round" : "  <-- done acting (or unoccupied)",
+				(currentHandIndex < 0) ? "  <-- waiting for its turn" : (currentHandIndex < handCount) ? "  <-- acting now" : "  <-- done acting (or unoccupied)",
 				(static_cast<std::int32_t>(seat) == mySeat) ? "  <-- candidate YOUR SEAT" : "");
 
 			if (occupiedMarker == -1)
