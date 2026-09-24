@@ -165,6 +165,17 @@ logic went unverified against real hands for 9 sessions previously
 specifically because there was no automated check on it (see
 `../PokerCheat/docs/JOURNAL.md`, Session 9); don't repeat that here.
 
+**Recorded rounds as tests.** The Debug build appends a JSONL round log,
+`BlackjackCheat_rounds.jsonl`, next to `BlackjackCheat.log`. It rolls over
+at 4 MB to `.1.jsonl`. Each round writes one `decision` line per advice shown
+and one `round` line at round end. The round line holds the deck, dealt
+seats, betting advice, final hands, won/lost, bankroll, and the dealer's
+predicted vs actual draw-out. To pin a real hand as a regression test, copy
+its line into `tests/fixtures/rounds.jsonl` and add `"expectBetting"` or
+`"expectAction"`. `BlackjackDeckSimTests` replays every such line through
+`EvaluatePreDealBetting()`/`DetermineFullAdvice()`, the same pure functions
+the mod calls. Format: `src/RoundRecord.h`.
+
 In-game (Debug build only): press F11 for the test menu (NUMPAD 8/2 move,
 NUMPAD 5 select, NUMPAD 0/Backspace/F11 back -- same controls as
 PokerCheat/CollectorOffline).
@@ -184,6 +195,17 @@ PokerCheat/CollectorOffline).
   `UpdateDeckPrediction()`, `DrawDealerHoleCardStatus()`,
   `ProbeDeckPrediction()`) lives here too, since it depends on the same
   struct offsets, not in a separate pure-math header.
+- `src/ScriptLocal.h` -- **every script-local read goes through it.**
+  HorseMenu's chainable accessor, by way of DominoCheat. Write each read
+  as the decompile's own path: `.f_N` → `At(N)`, `x[i]` with stride S →
+  `At(i, S)`. The array size word is added automatically. Never hand-add
+  "+1" or compute a flat slot. The layout block near the top of
+  `BlackjackCheat.cpp` holds the decompiled field numbers and the chains
+  (`LiveTableLocal()`, `SeatLocal()`, `SeatHandLocal()`, `DeckCardLocal()`,
+  ...). A `static_assert` pins each chain to its live-confirmed slot.
+  Older notes in the file header and `docs/JOURNAL.md` use pre-conversion
+  flat offsets. That scheme's "Table" base was one word past the real
+  struct (`uLocal_14.f_756`), so an old "Table+N" is `table.f_(N+1)` now.
 - `src/BlackjackHandEval.h` -- self-contained hand-value + basic-strategy
   logic (hard/soft totals, bust/blackjack detection, hit/stand/double/split
   recommendation, split-Ace forced-stand handling). Zero game dependency,
@@ -195,6 +217,10 @@ PokerCheat/CollectorOffline).
   cheat" hit/stand/double/split/betting engine (the mod's actual advice
   source since Session 7). Zero game dependency, shared by the mod and
   `tests/BlackjackDeckSimTests.cpp`.
+- `src/RoundRecord.h` -- the round log's JSONL line writer and flat-key
+  reader, shared by the mod's Debug-only `RoundRecorder` (in
+  `BlackjackCheat.cpp`) and the fixture replay test. Hand-written, same
+  approach as `GamePointers::DumpLocalStackJsonl`; no JSON library.
 - `src/scriptmenu.h/.cpp`, `src/keyboard.h/.cpp` -- vendored unchanged from
   PokerCheat (itself adapted from the ScriptHookRDR2 SDK's NativeTrainer
   sample).

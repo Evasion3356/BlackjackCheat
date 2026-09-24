@@ -9,8 +9,13 @@
 // failures otherwise.
 
 #include "../src/BlackjackDeckSim.h"
+#include "../src/RoundRecord.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -854,6 +859,154 @@ namespace
 		Check(CompareOutcome(naturalValue, naturalValue, /*playerNaturalCounts*/ false) == Outcome::Loss,
 			"a split two-card 21 loses to a dealer blackjack", "split hands can't have a natural");
 	}
+
+	// EvaluatePreDealBetting(): a lower seat dealt a natural never draws,
+	// so it doesn't make my own cards unknown. Live report: seat 0 A,K,
+	// me (seat 1) 9,Q = 19, seat 3 2,3, dealer K,10 = 20, Q next -- the
+	// exact answer is Low (standing loses, hitting busts), but counting
+	// seat 0 as "draws first" fell back to the textbook estimate, Medium.
+	// Also recorded in tests/fixtures/rounds.jsonl; this pins the rule
+	// itself, with a control where seat 0 has no natural.
+	void TestPreDealBettingIgnoresALowerSeatNatural()
+	{
+		std::printf("TestPreDealBettingIgnoresALowerSeatNatural:\n");
+
+		const bool seatsDealt[4] = { true, true, false, true };
+		const std::int32_t deck[14] = { 14, 13, 9, 12, 2, 3, 13, 10, 12, 2, 3, 11, 6, 8 };
+		Check(BlackjackDeckSim::EvaluatePreDealBetting(deck, 14, seatsDealt, 1) == Confidence::Low,
+			"19 vs a dealer 20 with a Q next is Low when the seat before mine has a natural",
+			"a natural never draws, so my own cards are exact -- stand loses, hit busts");
+
+		const std::int32_t deckNoNatural[14] = { 10, 6, 9, 12, 2, 3, 13, 10, 12, 2, 3, 11, 6, 8 };
+		Check(BlackjackDeckSim::EvaluatePreDealBetting(deckNoNatural, 14, seatsDealt, 1) == Confidence::Medium,
+			"the same hand with a drawing seat before mine falls back to the textbook estimate",
+			"seat 0's 16 draws first, so my cards aren't known; 19 vs a 10 up card estimates Medium");
+	}
+
+	std::string_view ConfidenceName(Confidence confidence)
+	{
+		return confidence == Confidence::High ? "High" : (confidence == Confidence::Medium ? "Medium" : "Low");
+	}
+
+	std::string_view ActionName(Action action)
+	{
+		switch (action)
+		{
+			case Action::Hit: return "Hit";
+			case Action::Double: return "Double";
+			case Action::Split: return "Split";
+			default: return "Stand";
+		}
+	}
+
+	// Replays tests/fixtures/rounds.jsonl -- lines copied out of the mod's
+	// BlackjackCheat_rounds.jsonl round log (Debug build) with an
+	// "expectBetting" (round lines) or "expectAction" (decision lines) key
+	// added by hand. Each line goes through the exact pure function the
+	// mod ran: EvaluatePreDealBetting() / DetermineFullAdvice(). See
+	// src/RoundRecord.h for the format. Lines without an expect* key, and
+	// blank or '#' lines, are skipped.
+	void TestRecordedRounds()
+	{
+		std::printf("TestRecordedRounds:\n");
+
+		const std::filesystem::path candidates[] = {
+			std::filesystem::path(__FILE__).parent_path() / "fixtures" / "rounds.jsonl",
+			std::filesystem::path("tests") / "fixtures" / "rounds.jsonl",
+		};
+		std::ifstream file;
+		for (const std::filesystem::path& candidate : candidates)
+		{
+			file.open(candidate);
+			if (file)
+				break;
+			file.clear();
+		}
+		if (!file)
+		{
+			Check(false, "tests/fixtures/rounds.jsonl opens", "run from the BlackjackCheat directory");
+			return;
+		}
+
+		std::int32_t checked = 0;
+		std::int32_t lineNumber = 0;
+		std::string line;
+		while (std::getline(file, line))
+		{
+			lineNumber++;
+			if (line.empty() || line[0] == '#')
+				continue;
+
+			std::string type;
+			std::string id;
+			std::string note;
+			RoundRecord::GetString(line, "type", type);
+			if (!RoundRecord::GetString(line, "id", id))
+				RoundRecord::GetString(line, "round", id);
+			RoundRecord::GetString(line, "note", note);
+			const std::string name = "rounds.jsonl:" + std::to_string(lineNumber) + " " + type + " " + id + (note.empty() ? "" : " -- " + note);
+
+			if (type == "round")
+			{
+				std::string expect;
+				if (!RoundRecord::GetString(line, "expectBetting", expect))
+					continue;
+
+				std::int32_t mySeat = -1;
+				std::vector<std::int32_t> seats;
+				std::vector<std::int32_t> deck;
+				if (!RoundRecord::GetInt(line, "mySeat", mySeat) || !RoundRecord::GetIntArray(line, "seatsDealt", seats)
+					|| !RoundRecord::GetIntArray(line, "deckRanks", deck) || seats.size() != 4)
+				{
+					Check(false, name.c_str(), "needs mySeat, seatsDealt (4 entries) and deckRanks");
+					continue;
+				}
+
+				bool seatsDealt[4] = {};
+				for (std::size_t i = 0; i < 4; i++)
+					seatsDealt[i] = seats[i] != 0;
+				std::string_view got = ConfidenceName(BlackjackDeckSim::EvaluatePreDealBetting(deck.data(), static_cast<std::int32_t>(deck.size()), seatsDealt, mySeat));
+				const std::string detail = "expected betting " + expect + ", got " + std::string(got);
+				Check(got == expect, name.c_str(), detail.c_str());
+				checked++;
+			}
+			else if (type == "decision")
+			{
+				std::string expect;
+				if (!RoundRecord::GetString(line, "expectAction", expect))
+					continue;
+
+				std::vector<std::int32_t> player;
+				std::vector<std::int32_t> dealer;
+				std::vector<std::int32_t> future;
+				bool canDouble = false;
+				bool canSplit = false;
+				bool isSplitAceHand = false;
+				bool isLast = false;
+				if (!RoundRecord::GetIntArray(line, "playerRanks", player) || !RoundRecord::GetIntArray(line, "dealerRanks", dealer)
+					|| !RoundRecord::GetIntArray(line, "futureRanks", future) || !RoundRecord::GetBool(line, "canDouble", canDouble)
+					|| !RoundRecord::GetBool(line, "canSplit", canSplit) || !RoundRecord::GetBool(line, "isSplitAceHand", isSplitAceHand)
+					|| !RoundRecord::GetBool(line, "isLastBeforeDealer", isLast) || player.empty() || dealer.empty())
+				{
+					Check(false, name.c_str(), "needs playerRanks, dealerRanks, futureRanks and the four flags");
+					continue;
+				}
+
+				std::string_view got = ActionName(BlackjackDeckSim::DetermineFullAdvice(
+					player.data(), static_cast<std::int32_t>(player.size()), dealer.data(), static_cast<std::int32_t>(dealer.size()),
+					future.data(), static_cast<std::int32_t>(future.size()), canDouble, canSplit, isSplitAceHand, isLast));
+				const std::string detail = "expected action " + expect + ", got " + std::string(got);
+				Check(got == expect, name.c_str(), detail.c_str());
+				checked++;
+			}
+			else
+			{
+				Check(false, name.c_str(), "unknown \"type\" -- expected round or decision");
+			}
+		}
+
+		Check(checked > 0, "rounds.jsonl has at least one expect* line", "an empty fixture file would silently test nothing");
+	}
 }
 
 int main()
@@ -897,6 +1050,8 @@ int main()
 	TestBettingConfidencePushAndLossAreBothLow();
 	TestOutcomeRanking();
 	TestNaturalsBeatThreeCardTwentyOne();
+	TestPreDealBettingIgnoresALowerSeatNatural();
+	TestRecordedRounds();
 
 	if (g_failures == 0)
 	{

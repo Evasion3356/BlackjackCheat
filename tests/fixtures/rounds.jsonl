@@ -1,0 +1,15 @@
+# Recorded rounds replayed by tests/BlackjackDeckSimTests.cpp (TestRecordedRounds).
+# Copy lines from BlackjackCheat_rounds.jsonl (next to BlackjackCheat.log, Debug build)
+# and add "expectBetting":"Low|Medium|High" (round lines) or
+# "expectAction":"Hit|Stand|Double|Split" (decision lines). An optional "note" shows in
+# the test output. Format: src/RoundRecord.h. Lines starting with # are ignored.
+#
+# 2026-09-24 09:22 -- rebuilt by hand from a ProbeTableStruct/ProbeDeckPrediction dump
+# (predates the round log, so only the first 14 cards are known). Seat 0 dealt a natural,
+# which never draws, so my 19 vs the dealer's 20 with a Q next is an exact loss; the mod
+# showed Medium because it counted seat 0 as drawing first.
+{"type":"round","id":"2026-09-24T09:22:45","note":"lower-seat natural never draws","mySeat":1,"seatsDealt":[1,1,0,1],"deckRanks":[14,13,9,12,2,3,13,10,12,2,3,11,6,8],"deck":"AC KH 9H QD 2H 3S KS 10H QS 2S 3H JD 6H 8D","betting":"Medium","expectBetting":"Low"}
+{"type":"decision","round":"2026-09-24T09:22:45","note":"19 vs a dealer 20, Q next: hitting busts","hand":0,"cards":"9H QD","dealer":"KS 10H","playerRanks":[9,12],"dealerRanks":[13,10],"futureRanks":[12,2,3,11,6,8],"canDouble":true,"canSplit":false,"isSplitAceHand":false,"isLastBeforeDealer":false,"expectAction":"Stand"}
+# 2026-09-24 10:19 -- first line from the round log. 19 vs a dealer 15 as last seat: my 2 makes 21 and the
+# dealer then takes the J and busts, so doubling wins twice (bankroll 300 -> 400 confirmed it).
+{"type":"decision","round":"2026-09-24T10:19:31.145","note":"19 vs 15, known 2 then J: double into 21, dealer busts","hand":0,"cards":"KD 9H","dealer":"6D 9D","playerRanks":[13,9],"dealerRanks":[6,9],"futureRanks":[2,11,9,10,10,5,8,7,3,11,8,12,10,14,3,5,13,12,14,9,14,7,6,4,8,14,6,7,6,13,3,5],"canDouble":true,"canSplit":true,"isSplitAceHand":false,"isLastBeforeDealer":true,"action":"Double","expectAction":"Double"}

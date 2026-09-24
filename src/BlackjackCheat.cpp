@@ -829,13 +829,19 @@
 #include "BlackjackCheat.h"
 #include "BlackjackHandEval.h"
 #include "BlackjackDeckSim.h"
+#include "RoundRecord.h"
+#include "LogFallback.h"
 #include "Log.h"
 #include "GamePointers.h"
+#include "ScriptLocal.h"
 #include "Config.h"
 #include "Localization.h"
 #include "script.h"
 
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <vector>
 #include <charconv>
 #include <string>
 #include <string_view>
@@ -859,163 +865,163 @@ namespace BlackjackCheat
 	}
 
 	// ------------------------------------------------------------------
-	// UNCONFIRMED struct layout -- see file header comment above for the
-	// full derivation/confidence notes on every one of these.
+	// Script-local layout, as ScriptLocal chains (ScriptLocal.h) that
+	// mirror bjack_sp.ysc.c's own field syntax: `.f_N` -> At(N),
+	// `x[i /*S*/]` -> At(i, S). Every offset below is the DECOMPILED field
+	// number -- no hand-applied "+1 for the size word" anywhere.
+	//
+	// Converting old notes: this file (and docs/JOURNAL.md) used to name
+	// table-level fields by flat offsets from a "Table" base that was one
+	// word past the real struct (uLocal_14 + 757 instead of f_756). So an
+	// old "Table+N"/"Table.f_N" for a plain table field is decompiled
+	// f_(N+1) here (e.g. old round state 579 = f_580), and old seat/hand/
+	// deck offsets folded in their arrays' size words (old seat hands +10
+	// = f_8[h] card 0, old bet +5 = f_4[0], old deck cursor 104 = f_105).
+	// The static_asserts at the end pin every chain to the slot live
+	// testing confirmed, so the conversion can't have moved a read.
 	// ------------------------------------------------------------------
-	constexpr std::uint32_t kLocalStructIndex = 14;   // uLocal_14
-	constexpr std::uint32_t kLaunchArgsSlot = 3624;   // uScriptParam_0 -- HIGH confidence (pure slot counting)
 
-	constexpr std::uint32_t kTableFieldOffset = 757;  // uLocal_14.f_757 -- CONFIRMED LIVE (Session 6, off-by-one fix from the original 756 static-trace guess -- see file header comment and docs/JOURNAL.md)
-	constexpr std::uint32_t kTableSlot = kLocalStructIndex + kTableFieldOffset;
+	// Table (bjack_sp.ysc.c: `func_272(&(uParam1->f_756))`, the state
+	// machine, and `func_116(&(uLocal_14.f_17), i)` for the presentation
+	// copy -- both table-shaped). Script-local declarations confirm the
+	// base of each copy: the dealer's 11-card array size word is declared
+	// `uLocal_33 = 11` (f_17 + 2), `uLocal_302 = 11` (f_286 + 2) and
+	// `uLocal_772 = 11` (f_756 + 2); the live seats array's size word is
+	// `uLocal_797 = 4` (f_756 + 27).
+	constexpr std::uint32_t kRootLocalIndex = 14;       // uLocal_14
+	constexpr std::uint32_t kMySeatField = 9;           // uLocal_14.f_9 -- the human's seat. CONFIRMED LIVE (Session 18: read 1 with the human at seat 1). Session 5 traced it via func_597's "is this the human seat" predicate.
+	constexpr std::uint32_t kDisplayedTableField = 17;  // uLocal_14.f_17 -- PRESENTATION copy of the table, see below
+	constexpr std::uint32_t kIncomingTableField = 286;  // uLocal_14.f_286 -- the next snapshot being animated into f_17
+	constexpr std::uint32_t kLiveTableField = 756;      // uLocal_14.f_756 -- the live table. CONFIRMED LIVE (Session 6; the old flat base was +757, one word too far).
+	constexpr std::uint32_t kPedSceneField = 1724;      // uLocal_14.f_1724 -- seat ped tracking (`func_117(&(uLocal_14.f_1724), i)`)
 
-	constexpr std::uint32_t kMySeatSlot = kLocalStructIndex + 9; // uLocal_14.f_9 -- HIGH confidence (Session 5, via func_597's real "is this the human seat" predicate -- see file header comment), CONFIRMED LIVE (Session 18: read 1 with the human at seat 1, while FindMySeatByPed() returned -1 -- the ped-array candidate is wrong/stale, so f_9 is the one to trust; DrawOverlay() already reads it first)
+	// The presentation copy (f_17). The live table can't show a round's
+	// end: once the last seat acts, func_272's loop runs func_718 case 7
+	// -> 4 -> 8 (dealer draw-out, payout) -> 0 (func_459: clear every
+	// hand, rebuild + reshuffle the deck) in ONE script tick. After every
+	// step it broadcasts a full copy of the table (func_339, event
+	// 74303845); func_107 copies each into f_286, and func_294 moves it
+	// into f_17 only once the previous one's animations have finished
+	// (every f_554[i] == 0). So f_17 lags the live table and holds the
+	// final hands, dealer hole card included, while the end-of-round
+	// animation plays (func_810 strips the hole card from mid-round
+	// copies only). CONFIRMED LIVE that f_17 and f_286 hold table copies:
+	// RoundRecorder's LocateTableCopies() found my hand's exact raw words
+	// at both, at the same internal offset as in the live table. Read only
+	// by the Debug round log (RoundRecorder).
 
-	// uLocal_14.f_1724 -- sibling "ped/scene" struct to Table, same role
-	// as poker_sp's own f_3310 -- HIGH confidence (Session 3, see file
-	// header comment). f_946[seat] (stride 46) is that seat's live Ped
-	// handle, offset+0 of the stride.
-	constexpr std::uint32_t kPedSceneFieldOffset = 1724;
-	constexpr std::uint32_t kPedSceneSlot = kLocalStructIndex + kPedSceneFieldOffset;
-	constexpr std::uint32_t kSeatPedArrayOffset = 946;
-	constexpr std::uint32_t kSeatPedStride = 46;
-
-	constexpr std::uint32_t kDealerHandOffset = 2;    // Table.f_2 -- MEDIUM-HIGH confidence
-
-	// Table.f_579 -- CONFIRMED LIVE as func_718's own round-state switch
-	// variable (bjack_sp.ysc.c:25809's `switch (uParam0->f_580)`, set by
-	// func_1047 via `uParam0->f_580 = iParam1`), off by exactly one word
-	// from the decompiled source's own field number -- the same shape as
-	// every other struct correction this project has needed
-	// (kTableFieldOffset 756->757, deck cursor/count, seat hands offset).
-	// A user-directed live investigation (7 F11 "Dump Full Stack JSONL"
-	// snapshots across one full round -- sat down / waiting to bet / bet
-	// placed / an NPC's turn / my own hit-or-stand decision / the dealer
-	// flipping his cards / end of round -- diffed programmatically
-	// against every other Table field already confirmed, to rule out
-	// coincidental matches inside the dealer hand/seats/deck arrays)
-	// found exactly one slot matching func_718's own case values end to
-	// end: table+579 read 0/0 (sat down, waiting to bet), 5/5/5 (bet
-	// placed through both NPC and my own turn -- func_718 case 5,
-	// "waiting on the current seat's action", covers either), then 0/0
-	// again (dealer flip, end of round). ONLY EVER 0 OR 5 IN THIS DATA --
-	// use it for "is any seat currently mid-decision", nothing finer.
-	// It does NOT distinguish "genuinely idle, ready for the next bet"
-	// from "the previous round's payout/reveal animation is still
-	// playing" -- both read 0 here, since func_718's own case 0 resets
-	// the state number immediately, well before the real on-screen
-	// animation catches up (case 8 calls func_1075/increments f_701/
-	// resets to case 0 in one script tick; the animation takes several
-	// more real seconds). For THAT distinction, see kRoundResolvingOffset
-	// below -- the ORIGINAL offset this file used for IsAtBettingPhase()
-	// before this session's investigation, which turned out to be a
-	// separate, real, still-correct field, not an off-by-one error after
-	// all. Kept confirmed but currently unused by any caller -- a future
-	// need for "is a hand actively being decided" (independent of the
-	// resolving-animation question) should reach for this, not
-	// kRoundResolvingOffset.
-	constexpr std::uint32_t kRoundStateOffset = 579;
-
-	// Table.f_580 -- the ORIGINAL offset this file used before this
-	// session (previously named kTableAnimationLockOffset), confirmed by
-	// the SAME 7-dump investigation that found kRoundStateOffset above:
-	// table+580 read 1/0/0/0/0/1/1 across sat down / waiting to bet / bet
-	// placed / NPC's turn / my turn / dealer flipping / end of round --
-	// i.e. 1 SPECIFICALLY while the previous round's payout/reveal
-	// animation is still playing on screen (even after the script has
-	// already reset dealerHand.count to 0 and reshuffled), 0 the rest of
-	// the time (both genuinely idle AND actively mid-hand -- dealerHand
-	// data itself already distinguishes those two). This is NOT
-	// func_718's own state number (off by one from it, at least in
-	// behavior) -- it's a separate animation-sequencer lock, most likely
-	// what func_477(&(uParam0->f_583))/func_1049 (case 0's own
-	// still-busy check, see func_718's decompile) actually reflect. Was
-	// briefly mis-diagnosed this session as simply the wrong offset for
-	// kRoundStateOffset and nearly replaced by it -- reverted once the
-	// same dump data showed the two fields answer genuinely different
-	// questions and IsAtBettingPhase() specifically needs THIS one (its
-	// whole job is staying false during exactly this lingering-animation
-	// window, matching the "1 while still resolving, 0 once genuinely
-	// ready" behavior this offset was originally, correctly, found to
-	// have).
-	constexpr std::uint32_t kRoundResolvingOffset = 580;
-
-	// Table.f_701 (EMPIRICAL -- NOT confirmed to be the same f_701 the
-	// decompile names in func_718's case 8/9, which only increments once
-	// per COMPLETED round; this reads a distinct value at each of several
-	// points WITHIN a single round, so it's very likely an unrelated
-	// field the flat-offset arithmetic happens to land on, same trap as
-	// the false table+644 lead earlier this same investigation -- treat
-	// the number as a raw slot, not a named decompiled field, until a
-	// cross-reference proves otherwise). Found via the SAME 7-dump
-	// investigation, this time searching for a slot taking on >=4 DISTINCT
-	// small clean-int values across the 7 snapshots (kRoundStateOffset
-	// and kRoundResolvingOffset above only ever gave 2 each): table+701
-	// read 1 (just sat down), 2 (waiting to bet), 3 (bet placed / cards
-	// being dealt), 7 (an occupied seat -- NPC or mine, held identically
-	// across both) is deciding hit/stand/double/split, then 8 (dealer's
-	// forced draw-out + payout + reveal, held steady through end of
-	// round). A genuine monotonically-increasing per-phase enum, not a
-	// tick/frame counter -- confirmed by npc_turn and my_turn (10 real
-	// seconds apart) both reading exactly 7, and dealer_flip/end_round
-	// (6 real seconds apart) both reading exactly 8; a raw counter would
-	// have kept climbing across either gap. This is the field to use for
-	// "which part of the round am I in" -- NOT YET CONFIRMED across a
-	// second round in the same sitting (does it reset to 2/3/7/8 for the
-	// next round, or keep climbing to 9/10/11/12? -- 579/580 above are
-	// each independently confirmed to reset every round, so a genuine
-	// per-round reset here would be the expected, consistent answer, but
-	// only a second round's dumps can actually prove it).
-	constexpr std::uint32_t kRoundPhaseOffset = 701;
-
-	constexpr std::uint32_t kSeatsBase = 27;          // Table.f_27 -- MEDIUM-HIGH confidence
+	// Table fields.
+	constexpr std::uint32_t kTableDealerHandField = 2;  // table.f_2 -- dealer hand struct (see Hand fields). MEDIUM-HIGH confidence, live-consistent.
+	constexpr std::uint32_t kTableSeatsField = 27;      // table.f_27[seat /*60*/]
 	constexpr std::uint32_t kSeatStride = 60;
-	constexpr std::uint32_t kSeatCount = 4;           // CONFIRMED via func_280's direct `iParam1 < 4` bounds check -- HIGH confidence (Session 2)
-	constexpr std::uint32_t kSeatOccupiedOffset = 0;  // != -1 means occupied -- confirmed (func_116)
-	constexpr std::uint32_t kSeatHandsOffset = 10;    // seat.f_10[hand] (stride 25) -- CONFIRMED LIVE (Session 6, corrected from the original 8 static-trace guess -- verified against all 4 real seats' cards simultaneously, see docs/JOURNAL.md)
-	constexpr std::uint32_t kSeatHandCountOffset = 59; // seat.f_59 -- HIGH confidence again (Session 7 second addendum): re-confirmed live via a raw stack dump matching the real screen (read 1 for a genuinely unsplit hand while a stale/leftover hand-1 struct sat right next to it) -- see docs/JOURNAL.md. Briefly distrusted and replaced with a raw-scan-derived count earlier in Session 7; that replacement was itself wrong (see kHandCountOffset's comment below) and has been reverted.
-	constexpr std::uint32_t kMaxHandsPerSeat = 2;     // CONFIRMED cap via func_1237 case 6 (`f_59 > 1` blocks split) -- HIGH confidence (Session 2)
-	constexpr std::uint32_t kSeatBankrollOffset = 1;  // seat.f_1 -- MEDIUM confidence (Session 2). Session 10: now also read live by OnTick()'s advice loop (see the canDouble computation below) -- a live-reported bug had advice recommend Double with insufficient bankroll, since canDouble previously only checked card count, never the game's own bankroll-vs-bet legality gate (`f_1 >= f_4[handIndex]`, BlackjackHandEval.h's own header comment).
-	// seat.f_4[handIndex] is a script ARRAY, and YSC arrays carry their
-	// element count in the first word -- so seat.f_4 itself is the array
-	// size (always kMaxHandsPerSeat = 2) and bet[h] lives at f_4 + 1 + h.
-	// This used to read f_4 directly (offset 4), i.e. the constant 2, for
-	// every hand: Session 9's raw dump (docs/JOURNAL.md, the seat table
-	// under "Replaying SimulatePreDeal()") logged f_4[0] = 2 for all three
-	// seats, INCLUDING the human seat before it had confirmed any bet --
-	// the size word, not a bet. The layout fits exactly: size + 2 bets =
-	// f_4..f_6, then the live-confirmed bet-lock flag at f_7. Effect of
-	// the old read: canDouble reduced to `bankroll >= 2`, so the Session
-	// 10 "don't advise Double without the bankroll" fix never actually
-	// gated anything. CONFIRMED LIVE (Session 18): with a $250 bet on
-	// the human seat, ProbeSeatHands() logged bet(f_4[0], +5)=250 and
-	// the size word (+4)=2 (an NPC seat read bet=4, size word 2).
-	constexpr std::uint32_t kSeatBetArrayOffset = 4;   // seat.f_4 -- the array's size word (expect 2)
-	constexpr std::uint32_t kSeatBetOffset = kSeatBetArrayOffset + 1; // seat.f_4[0] -- bet[h] is at +5+h. Session 10: read live by OnTick()'s advice loop for the canDouble/canSplit bankroll checks.
-	constexpr std::uint32_t kSeatInsuranceOffset = 2; // seat.f_2 -- insurance stake, -1 = not decided yet (reset with f_3 at round start; func_718 case 2 / func_1060). Static trace only, but it sits between the live-confirmed f_1 and f_3, before the first array (f_4) that could shift offsets. Read by OnTick()'s insurance window check.
-	constexpr std::uint32_t kSeatCurrentHandIndexOffset = 3; // seat.f_3 -- HIGH confidence (Session 5, f_N=offset+N convention + func_1063's direct f_3<f_59 comparison), static trace only. Read by DrawOverlay() to pick which split hand gets advice, with a first-live-hand fallback if it reads out of range
-	constexpr std::uint32_t kSeatBetConfirmedOffset = 7; // seat.f_7 -- CONFIRMED LIVE (Session 9 live addendum): a before/after dump pair caught it reading 0 for the human seat pre-confirm and 1 post-confirm, while both NPC seats already read 1 in BOTH dumps (they lock in instantly; the table visibly waits on the human) -- exactly the func_1056 mechanism this was traced from. func_759 (line ~27401) reads exactly `seat.f_7`, and that same field is what func_1056 requires nonzero on EVERY occupied seat before the table leaves state 0 for the next round, and what func_1057 (the actual initial-deal function) checks per-seat before dealing into it -- i.e. this is the real "this seat's bet is locked in" flag, not merely "a bet amount is set" (that's kSeatBetOffset/f_4[0], checked separately by both of those same functions). Not read by OnTick(), Probe-only as of Session 9's occupancy-only simplification (see SimulatePreDeal()'s own header comment) -- still a real, confirmed field, just no longer this file's gate for who's about to be dealt in.
+	constexpr std::uint32_t kSeatCount = 4;             // CONFIRMED via func_280's direct `iParam1 < 4` bounds check -- HIGH confidence (Session 2)
+	constexpr std::uint32_t kTableDeckField = 592;      // table.f_592 -- the deck. CONFIRMED LIVE (Session 7 addendum: the 52-card {rank,suit} pattern was located by scanning 3 real stack dumps).
 
-	constexpr std::uint32_t kHandStride = 25;         // words per hand struct (dealer's and every seat hand's)
-	constexpr std::uint32_t kHandCardsOffset = 0;      // 11 slots, 2 words each, NO header word
+	// table.f_580 -- func_718's own round-state switch variable
+	// (`switch (uParam0->f_580)`, set by func_1047). CONFIRMED LIVE
+	// (old name kRoundStateOffset = 579): a 7-dump investigation across one
+	// round read 0/0 (sat down, waiting to bet), 5/5/5 (bet placed through
+	// both an NPC's and my own turn -- case 5, "waiting on the current
+	// seat's action"), then 0/0 (dealer flip, end of round). Only ever 0 or
+	// 5 in that data: case 0 resets immediately, well before the on-screen
+	// animation catches up. Probe-only -- use kTableAnimationLockField for
+	// "is the table still animating".
+	constexpr std::uint32_t kTableRoundStateField = 580;
+
+	// table.f_581 -- func_272 only steps the state machine while this is 0
+	// (`if (uParam0->f_581 == 0)`). CONFIRMED LIVE (old name
+	// kRoundResolvingOffset = 580): the same 7 dumps read 1/0/0/0/0/1/1 --
+	// 1 specifically while the previous round's payout/reveal animation is
+	// still playing (even after the dealer's hand and deck have reset).
+	constexpr std::uint32_t kTableAnimationLockField = 581;
+
+	// table.f_702 -- EMPIRICAL round-phase enum (old name kRoundPhaseOffset
+	// = 701; NOT the decompile's f_701 round counter that case 8/9
+	// increments -- that's the neighbouring field). The same 7-dump
+	// investigation found it reading 1 (just sat down), 2 (waiting to bet),
+	// 3 (bet placed / dealing), 7 (a seat -- NPC or mine -- deciding), 8
+	// (dealer draw-out + payout + reveal, through end of round); npc_turn and
+	// my_turn (10 s apart) both read exactly 7, dealer_flip/end_round (6 s
+	// apart) both 8, so it's a per-phase enum, not a counter. Not yet
+	// confirmed to reset across a second round in one sitting.
+	constexpr std::uint32_t kTableRoundPhaseField = 702;
+
+	// Seat fields (table.f_27[seat]).
+	constexpr std::uint32_t kSeatOccupiedField = 0;     // seat.f_0 -- != -1 means occupied, confirmed (func_116)
+	constexpr std::uint32_t kSeatBankrollField = 1;     // seat.f_1 -- bankroll. CONFIRMED LIVE (round log: 300 -> 400 on a doubled $50 win). Read by the advice loop's canDouble/canSplit gate (func_1237: `f_1 >= f_4[handIndex]`).
+	constexpr std::uint32_t kSeatInsuranceField = 2;    // seat.f_2 -- insurance stake, -1 = not decided yet (reset with f_3 at round start; func_718 case 2 / func_1060). Static trace only. Read by the insurance window check.
+	constexpr std::uint32_t kSeatCurrentHandField = 3;  // seat.f_3 -- current-hand index: -1 while waiting (reset at round start), 0.. while acting, == f_59 once done (func_1063's `f_3 < f_59`). HIGH confidence (Session 5), live-consistent.
+	constexpr std::uint32_t kSeatBetsField = 4;         // seat.f_4[h] -- bet per hand. CONFIRMED LIVE (Session 18: a $250 bet read 250 at f_4[0], the size word read 2). The old flat read of "f_4" was the size word, so canDouble reduced to `bankroll >= 2`. The bet only lands here at the deal (round log: it read 0 all through betting).
+	constexpr std::uint32_t kSeatBetLockedField = 7;    // seat.f_7 -- "bet locked in" flag. CONFIRMED LIVE (Session 9: 0 pre-confirm, 1 post-confirm for the human; NPCs lock instantly). func_1056 needs it on every occupied seat to leave state 0; func_1057 checks it before dealing a seat in. Probe-only.
+	constexpr std::uint32_t kSeatHandsField = 8;        // seat.f_8[h /*25*/] -- hand structs. CONFIRMED LIVE (Session 6: old flat offset 10 = f_8[0]'s card 0, verified against all 4 seats' real cards).
+	constexpr std::uint32_t kSeatHandCountField = 59;   // seat.f_59 -- hands in play (1, or 2 after a split). CONFIRMED LIVE (Session 7 second addendum).
+	constexpr std::uint32_t kMaxHandsPerSeat = 2;       // CONFIRMED cap via func_1237 case 6 (`f_59 > 1` blocks split) -- HIGH confidence (Session 2)
+
+	// Hand fields (seat.f_8[h] and table.f_2 share this struct).
+	constexpr std::uint32_t kHandStride = 25;
+	constexpr std::uint32_t kHandCardsField = 0;        // hand[i /*2*/] -- up to 11 cards
 	constexpr std::uint32_t kHandMaxCards = 11;
-	constexpr std::uint32_t kHandCountOffset = 22;     // hand.f_22 -- CONFIRMED LIVE for BOTH seat hands (Session 6) and the dealer's own hand (Session 7 second addendum: a later dump read 2 here for the dealer, matching a real 2-card hand, resolving Session 6's earlier 0/0 sample as a one-off transient rather than a permanent quirk -- see docs/JOURNAL.md). ReadHand() trusts this field directly again after a brief, actively-wrong detour through raw-array-scanning earlier in Session 7 -- see ReadHand()'s own header comment for why scanning was unsafe (stale, never-cleared trailing cards from a previous deal can look exactly like real ones).
-	constexpr std::uint32_t kHandValueOffset = 23;     // hand.f_23 -- CONFIRMED LIVE for both seat hands and the dealer's hand, same Session 7 second-addendum re-confirmation as kHandCountOffset above.
+	constexpr std::uint32_t kHandCountField = 23;       // hand.f_23 -- card count. CONFIRMED LIVE for seat hands (Session 6) and the dealer's (Session 7 second addendum). ReadHand() trusts it directly -- scanning the card array is unsafe, stale trailing cards from a previous deal look exactly like real ones.
+	constexpr std::uint32_t kHandValueField = 24;       // hand.f_24 -- the game's own hand value. CONFIRMED LIVE alongside f_23.
 
-	constexpr std::uint32_t kDeckOffset = 592;         // Table.f_592 -- CONFIRMED LIVE (Session 7 addendum): the 52-card {rank,suit} pattern was located by scanning 3 real stack dumps and landed exactly at kTableSlot+592, matching this offset with no correction needed.
-	constexpr std::uint32_t kDeckSlot = kTableSlot + kDeckOffset;
-	constexpr std::uint32_t kDeckCursorOffset = 104;   // deck.f_104 -- CONFIRMED LIVE (Session 7 addendum, corrected from the original 105 static-trace guess: across 3 real stack dumps, offset+104 was the one that actually varied between game states (0, 0, 8) while +105 was a constant 52 -- i.e. the cards (offsets 0-103) are immediately followed by cursor with NO spare word, not cursor-then-count as originally guessed). This bug silently broke "Next card (if you Hit)" and desynced SimulateDealerOutcome(): the old +105/+106 pair read (realCount, garbage) instead of (realCursor, realCount), so the deckCursor<deckCount sanity guard was false almost always.
-	constexpr std::uint32_t kDeckCountOffset = 105;    // deck.f_105 -- CONFIRMED LIVE (Session 7 addendum, corrected from the original 106 static-trace guess -- see kDeckCursorOffset's comment above); reads a steady 52 across all 3 dumps, matching the single-52-card-deck-per-round finding (Session 3).
-	constexpr std::uint32_t kDeckCardsBaseOffset = 0;  // no header word (confirmed via func_458's build loop)
-	constexpr std::int32_t kDeckSize = 52;             // Session 3 finding -- a freshly-shuffled deck is always exactly 52 cards (single deck, no shoe)
+	// Card fields (hand[i] and deck[i]).
+	constexpr std::uint32_t kCardStride = 2;
+	constexpr std::uint32_t kCardRankField = 0;         // 2..14, A = 14
+	constexpr std::uint32_t kCardSuitField = 1;
+
+	// Deck fields (table.f_592). func_1240 draws `uParam0->[f_105 /*2*/]`
+	// and advances f_105 while f_105 < f_106.
+	constexpr std::uint32_t kDeckCardsField = 0;        // deck[i /*2*/]
+	constexpr std::uint32_t kDeckCursorField = 105;     // deck.f_105 -- next card to draw. CONFIRMED LIVE (Session 7 addendum: varied 0, 0, 8 across 3 dumps).
+	constexpr std::uint32_t kDeckCountField = 106;      // deck.f_106 -- cards in the deck, a steady 52. CONFIRMED LIVE (same dumps).
+	constexpr std::int32_t kDeckSize = 52;              // Session 3 finding -- a freshly-shuffled deck is always exactly 52 cards (single deck, no shoe)
+
+	// Seat ped tracking (uLocal_14.f_1724.f_946[seat /*46*/], each seat's
+	// live Ped handle at +0 of its element). CONFIRMED LIVE after the
+	// ScriptLocal conversion: the old flat read skipped this array's size
+	// word (slot 2684 + 46*seat instead of 2685), which is why
+	// FindMySeatByPed() always returned -1. Now seat 0 read the player's own
+	// ped (matching PLAYER_PED_ID()) and agreed with f_9. f_9 (kMySeatField)
+	// stays the primary seat source; this is the independent cross-check.
+	constexpr std::uint32_t kPedArrayField = 946;
+	constexpr std::uint32_t kPedStride = 46;
+
+	constexpr ScriptLocal RootLocal(rage::scrThread* thread) { return ScriptLocal(thread, kRootLocalIndex); }
+	constexpr ScriptLocal MySeatLocal(rage::scrThread* thread) { return RootLocal(thread).At(kMySeatField); }
+	constexpr ScriptLocal LiveTableLocal(rage::scrThread* thread) { return RootLocal(thread).At(kLiveTableField); }
+	constexpr ScriptLocal DisplayedTableLocal(rage::scrThread* thread) { return RootLocal(thread).At(kDisplayedTableField); }
+	constexpr ScriptLocal SeatPedLocal(rage::scrThread* thread, std::uint32_t seat) { return RootLocal(thread).At(kPedSceneField).At(kPedArrayField).At(seat, kPedStride); }
+
+	constexpr ScriptLocal DealerHandLocal(const ScriptLocal& table) { return table.At(kTableDealerHandField); }
+	constexpr ScriptLocal SeatLocal(const ScriptLocal& table, std::uint32_t seat) { return table.At(kTableSeatsField).At(seat, kSeatStride); }
+	constexpr ScriptLocal SeatLocal(rage::scrThread* thread, std::uint32_t seat) { return SeatLocal(LiveTableLocal(thread), seat); }
+	constexpr ScriptLocal SeatBetLocal(const ScriptLocal& seat, std::uint32_t hand) { return seat.At(kSeatBetsField).At(hand, 1); }
+	constexpr ScriptLocal SeatHandLocal(const ScriptLocal& seat, std::uint32_t hand) { return seat.At(kSeatHandsField).At(hand, kHandStride); }
+	constexpr ScriptLocal HandCardLocal(const ScriptLocal& hand, std::uint32_t card) { return hand.At(kHandCardsField).At(card, kCardStride); }
+
+	constexpr ScriptLocal DeckLocal(rage::scrThread* thread) { return LiveTableLocal(thread).At(kTableDeckField); }
+	constexpr ScriptLocal DeckCardLocal(rage::scrThread* thread, std::int32_t card) { return DeckLocal(thread).At(kDeckCardsField).At(static_cast<std::uint32_t>(card), kCardStride); }
+
+	// Pinned to the absolute slots live testing confirmed (ProbeTableStruct/
+	// ProbeSeatHands logs, Sessions 6-18).
+	static_assert(MySeatLocal(nullptr).Index() == 23);
+	static_assert(DealerHandLocal(LiveTableLocal(nullptr)).At(kHandCardsField).Index() == 772);                  // dealer card array size word (`uLocal_772 = 11`)
+	static_assert(HandCardLocal(DealerHandLocal(LiveTableLocal(nullptr)), 0).Index() == 773);                    // dealer card 0
+	static_assert(SeatLocal(nullptr, 0).Index() == 798 && SeatLocal(nullptr, 1).Index() == 858 && SeatLocal(nullptr, 3).Index() == 978);
+	static_assert(HandCardLocal(SeatHandLocal(SeatLocal(nullptr, 0), 0), 0).Index() == 808);                     // seat 0 hand 0 card 0
+	static_assert(HandCardLocal(SeatHandLocal(SeatLocal(nullptr, 0), 1), 0).Index() == 833);                     // seat 0 hand 1 card 0
+	static_assert(SeatHandLocal(SeatLocal(nullptr, 0), 0).At(kHandCountField).Index() == 808 + 22);              // old kHandCountOffset 22 from card 0
+	static_assert(SeatBetLocal(SeatLocal(nullptr, 1), 0).Index() == 863);                                        // seat 1 bet (Session 18)
+	static_assert(DeckCardLocal(nullptr, 0).Index() == 1363);
+	static_assert(DeckLocal(nullptr).At(kDeckCursorField).Index() == 1363 + 104 && DeckLocal(nullptr).At(kDeckCountField).Index() == 1363 + 105);
+	static_assert(LiveTableLocal(nullptr).At(kTableRoundStateField).Index() == 1350);
+	static_assert(LiveTableLocal(nullptr).At(kTableAnimationLockField).Index() == 1351);
+	static_assert(LiveTableLocal(nullptr).At(kTableRoundPhaseField).Index() == 1472);
+	static_assert(HandCardLocal(SeatHandLocal(SeatLocal(DisplayedTableLocal(nullptr), 2), 0), 0).Index() == 189); // presentation copy, seat 2 hand 0 card 0 (LocateTableCopies)
+	static_assert(HandCardLocal(SeatHandLocal(SeatLocal(RootLocal(nullptr).At(kIncomingTableField), 2), 0), 0).Index() == 458);
 
 	namespace
 	{
-		std::int32_t ReadInt(rage::scrThread* thread, std::uint32_t slot)
-		{
-			void* raw = GamePointers::ReadScriptLocal(thread, slot);
-			return static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(raw));
-		}
-
 		// The deck's live card count, clamped to the one real deck size.
 		// Every advice/prediction loop bounds its reads by this value, so
 		// a garbage read (wrong script, mid-teardown, or an offset that's
@@ -1025,7 +1031,7 @@ namespace BlackjackCheat
 		// field -- they exist to show exactly what memory says.
 		std::int32_t ReadDeckCount(rage::scrThread* thread)
 		{
-			std::int32_t count = ReadInt(thread, kDeckSlot + kDeckCountOffset);
+			std::int32_t count = DeckLocal(thread).At(kDeckCountField).AsInt32();
 			if (count < 0)
 				return 0;
 			return count > kDeckSize ? kDeckSize : count;
@@ -1220,11 +1226,11 @@ namespace BlackjackCheat
 		// fix and is why "Next card"/advice broke down for a real,
 		// unsplit hand. kHandMaxCards clamp kept purely as a defensive
 		// bound against a genuinely out-of-range field read.
-		HandCards ReadHand(rage::scrThread* thread, std::uint32_t handSlot)
+		HandCards ReadHand(const ScriptLocal& handLocal)
 		{
 			HandCards hand{};
 
-			std::int32_t count = ReadInt(thread, handSlot + kHandCountOffset);
+			std::int32_t count = handLocal.At(kHandCountField).AsInt32();
 			if (count < 0)
 				count = 0;
 			if (count > static_cast<std::int32_t>(kHandMaxCards))
@@ -1232,8 +1238,9 @@ namespace BlackjackCheat
 
 			for (std::int32_t i = 0; i < count; i++)
 			{
-				hand.ranks[i] = ReadInt(thread, handSlot + kHandCardsOffset + static_cast<std::uint32_t>(i) * 2);
-				hand.suits[i] = ReadInt(thread, handSlot + kHandCardsOffset + static_cast<std::uint32_t>(i) * 2 + 1);
+				ScriptLocal card = HandCardLocal(handLocal, static_cast<std::uint32_t>(i));
+				hand.ranks[i] = card.At(kCardRankField).AsInt32();
+				hand.suits[i] = card.At(kCardSuitField).AsInt32();
 			}
 			hand.count = count;
 
@@ -1241,21 +1248,19 @@ namespace BlackjackCheat
 		}
 
 		// Primary "my seat" determination (Session 3) -- reads each
-		// seat's live Ped handle off the Table-sibling scene struct
-		// (kPedSceneSlot, see file header comment) and asks the game
+		// seat's live Ped handle off the seat ped-tracking array
+		// (SeatPedLocal(), uLocal_14.f_1724.f_946[seat]) and asks the game
 		// itself, via a real native call, whether it's the local player.
 		// Returns -1 if no seat's ped matches (e.g. bjack_sp isn't
 		// running, or between rounds). Deliberately independent of the
-		// ambiguous kMySeatSlot (f_9) field -- see that constant's own
-		// comment.
+		// f_9 field (MySeatLocal()), which is the one that's live-confirmed.
 		std::int32_t FindMySeatByPed(rage::scrThread* thread)
 		{
 			std::int32_t myPed = static_cast<std::int32_t>(PLAYER::PLAYER_PED_ID());
 
 			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
-				std::uint32_t pedSlot = kPedSceneSlot + kSeatPedArrayOffset + seat * kSeatPedStride;
-				std::int32_t pedHandle = ReadInt(thread, pedSlot);
+				std::int32_t pedHandle = SeatPedLocal(thread, seat).AsInt32();
 				if (pedHandle != 0 && pedHandle == myPed)
 					return static_cast<std::int32_t>(seat);
 			}
@@ -1332,26 +1337,26 @@ namespace BlackjackCheat
 			std::int32_t cursor = 0;
 			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
-				std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-				std::int32_t occupiedMarker = ReadInt(thread, seatBase + kSeatOccupiedOffset);
+				ScriptLocal seatBase = SeatLocal(thread, seat);
+				std::int32_t occupiedMarker = seatBase.At(kSeatOccupiedField).AsInt32();
 
 				if (occupiedMarker == -1)
 					continue; // assumes every occupied seat bets every round -- see this function's own header comment above
 
 				result.seatWillPlay[seat] = true;
 				HandCards& hand = result.seatHands[seat];
-				hand.ranks[0] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor) * 2);
-				hand.suits[0] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor) * 2 + 1);
-				hand.ranks[1] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor + 1) * 2);
-				hand.suits[1] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor + 1) * 2 + 1);
+				hand.ranks[0] = DeckCardLocal(thread, cursor).At(kCardRankField).AsInt32();
+				hand.suits[0] = DeckCardLocal(thread, cursor).At(kCardSuitField).AsInt32();
+				hand.ranks[1] = DeckCardLocal(thread, cursor + 1).At(kCardRankField).AsInt32();
+				hand.suits[1] = DeckCardLocal(thread, cursor + 1).At(kCardSuitField).AsInt32();
 				hand.count = 2;
 				cursor += 2;
 			}
 
-			result.dealerHand.ranks[0] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor) * 2);
-			result.dealerHand.suits[0] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor) * 2 + 1);
-			result.dealerHand.ranks[1] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor + 1) * 2);
-			result.dealerHand.suits[1] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(cursor + 1) * 2 + 1);
+			result.dealerHand.ranks[0] = DeckCardLocal(thread, cursor).At(kCardRankField).AsInt32();
+			result.dealerHand.suits[0] = DeckCardLocal(thread, cursor).At(kCardSuitField).AsInt32();
+			result.dealerHand.ranks[1] = DeckCardLocal(thread, cursor + 1).At(kCardRankField).AsInt32();
+			result.dealerHand.suits[1] = DeckCardLocal(thread, cursor + 1).At(kCardSuitField).AsInt32();
 			result.dealerHand.count = 2;
 			cursor += 2;
 
@@ -1397,7 +1402,7 @@ namespace BlackjackCheat
 				return; // never saw a valid pre-deal snapshot this round (e.g. the mod was toggled on mid-round) -- nothing to check
 
 #ifdef _DEBUG
-			HandCards actualDealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
+			HandCards actualDealerHand = ReadHand(DealerHandLocal(LiveTableLocal(thread)));
 			std::string predictedDealerStr = FormatHandCards(g_lastPreDeal.dealerHand);
 			std::string actualDealerStr = FormatHandCards(actualDealerHand);
 
@@ -1414,8 +1419,8 @@ namespace BlackjackCheat
 				if (!g_lastPreDeal.seatWillPlay[seat])
 					continue;
 
-				std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-				HandCards actualSeatHand = ReadHand(thread, seatBase + kSeatHandsOffset);
+				ScriptLocal seatBase = SeatLocal(thread, seat);
+				HandCards actualSeatHand = ReadHand(SeatHandLocal(seatBase, 0));
 				std::string predictedSeatStr = FormatHandCards(g_lastPreDeal.seatHands[seat]);
 				std::string actualSeatStr = FormatHandCards(actualSeatHand);
 
@@ -1458,7 +1463,7 @@ namespace BlackjackCheat
 			if (dealerHasCards)
 				return false;
 
-			return ReadInt(thread, kTableSlot + kRoundPhaseOffset) == 2;
+			return LiveTableLocal(thread).At(kTableRoundPhaseField).AsInt32() == 2;
 		}
 
 		// Deterministic deck-ahead prediction (Session 4) -- the blackjack
@@ -1535,8 +1540,8 @@ namespace BlackjackCheat
 
 			while (value.total < 17 && result.totalCount < static_cast<std::int32_t>(kHandMaxCards) && simCursor >= 0 && simCursor < deckCount)
 			{
-				result.ranks[result.totalCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(simCursor) * 2);
-				result.suits[result.totalCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(simCursor) * 2 + 1);
+				result.ranks[result.totalCount] = DeckCardLocal(thread, simCursor).At(kCardRankField).AsInt32();
+				result.suits[result.totalCount] = DeckCardLocal(thread, simCursor).At(kCardSuitField).AsInt32();
 				result.totalCount++;
 				simCursor++;
 
@@ -1607,101 +1612,48 @@ namespace BlackjackCheat
 		// just no longer unconditionally.
 		constexpr std::int32_t kFutureLookahead = 32; // generous bound: worst case is a split's two hands' own draws plus the dealer's, each capped at kHandMaxCards
 
-		BlackjackHandEval::Action DetermineAdvice(rage::scrThread* thread, const HandCards& playerHand, const HandCards& dealerHand,
-			std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool canSplit, bool isSplitAceHand, bool isLastSeatBeforeDealer)
+		// The live deck from `deckCursor` onward, as plain ranks -- the
+		// input every BlackjackDeckSim.h decision takes. Returns the count.
+		std::int32_t ReadFutureRanks(rage::scrThread* thread, std::int32_t deckCursor, std::int32_t deckCount, std::int32_t (&futureRanks)[kFutureLookahead])
 		{
-			if (isSplitAceHand)
-				return BlackjackHandEval::Action::Stand; // forced by the game itself, see BlackjackHandEval.h's own header comment
-
-			std::int32_t futureRanks[kFutureLookahead];
 			std::int32_t futureCount = 0;
 			for (; futureCount < kFutureLookahead; futureCount++)
 			{
 				std::int32_t idx = deckCursor + futureCount;
 				if (idx < 0 || idx >= deckCount)
 					break;
-				futureRanks[futureCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
+				futureRanks[futureCount] = DeckCardLocal(thread, idx).At(kCardRankField).AsInt32();
 			}
+			return futureCount;
+		}
 
-			if (canSplit && playerHand.count == 2 && playerHand.ranks[0] == playerHand.ranks[1])
-			{
-				BlackjackDeckSim::SplitDecision splitDecision = BlackjackDeckSim::EvaluateSplit(
-					playerHand.ranks, playerHand.count, dealerHand.ranks, dealerHand.count,
-					futureRanks, futureCount, canDouble, isLastSeatBeforeDealer);
-
-				if (splitDecision.trustworthy)
-				{
-					if (splitDecision.shouldSplit)
-						return BlackjackHandEval::Action::Split;
-					// else: deck-derived already answered "don't split" exactly -- fall through to the normal Hit/Stand/Double evaluation below, not the blind pair chart
-				}
-				else
-				{
-					BlackjackHandEval::Action basicSuggestion = BlackjackHandEval::GetBasicStrategyAction(
-						playerHand.ranks, playerHand.count, dealerHand.ranks[1], canDouble, canSplit, false);
-					if (basicSuggestion == BlackjackHandEval::Action::Split)
-						return BlackjackHandEval::Action::Split;
-				}
-			}
-
-			return BlackjackDeckSim::DetermineCheatAction(playerHand.ranks, playerHand.count, dealerHand.ranks, dealerHand.count,
-				futureRanks, futureCount, canDouble, isSplitAceHand, isLastSeatBeforeDealer);
+		// The decision itself is BlackjackDeckSim::DetermineFullAdvice() --
+		// pure, so a recorded "decision" line (RoundRecord.h) replays
+		// through exactly this code in tests/BlackjackDeckSimTests.cpp.
+		BlackjackHandEval::Action DetermineAdvice(rage::scrThread* thread, const HandCards& playerHand, const HandCards& dealerHand,
+			std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool canSplit, bool isSplitAceHand, bool isLastSeatBeforeDealer)
+		{
+			std::int32_t futureRanks[kFutureLookahead];
+			std::int32_t futureCount = ReadFutureRanks(thread, deckCursor, deckCount, futureRanks);
+			return BlackjackDeckSim::DetermineFullAdvice(playerHand.ranks, playerHand.count, dealerHand.ranks, dealerHand.count,
+				futureRanks, futureCount, canDouble, canSplit, isSplitAceHand, isLastSeatBeforeDealer);
 		}
 
 		// Session 13 addition -- Betting Advice (user request: a Low/
 		// Medium/High bet-sizing readout, shown above the ordinary
-		// hit/stand/double/split line). Same futureRanks-gathering
-		// pattern as DetermineAdvice() above -- reads the live deck into
-		// a plain rank array and hands it to the pure, tested
-		// BlackjackDeckSim::EvaluateBettingConfidence(). When that isn't
-		// trustworthy (another occupied seat still has to act before the
-		// dealer, and the dealer's own hand isn't already 17+), falls
-		// back to BlackjackHandEval::EstimateBettingConfidence() -- a
-		// rough, non-deck-derived heuristic, same "textbook chart when
-		// deck simulation isn't trustworthy" convention DetermineAdvice()
-		// itself already uses for Split.
-		//
-		// ownDrawsExact (code-review fix): the deck-derived path assumes
-		// this hand's own hits come straight off deckCursor. Pre-deal,
-		// that only holds when no occupied seat acts BEFORE this one --
-		// a lower seat's hits shift the cursor first, so the deck-derived
-		// playout would hand this hand cards it will never actually get
-		// (isLastSeatBeforeDealer only covers seats AFTER it, and the
-		// "dealer already 17+" shortcut doesn't help either, since it's
-		// this hand's own cards that are wrong). A natural is still exact
-		// either way -- it needs no draws on either side.
-		BlackjackHandEval::BettingConfidence DetermineBettingAdvice(rage::scrThread* thread, const HandCards& playerHand, const HandCards& dealerHand,
-			std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool isLastSeatBeforeDealer, bool ownDrawsExact)
+		// hit/stand/double/split line), shown pre-deal only (Session 14).
+		// The whole decision is BlackjackDeckSim::EvaluatePreDealBetting()
+		// -- pure, taking only the freshly shuffled deck, which seats will
+		// be dealt in and my seat, so a recorded "round" line replays
+		// through it exactly (tests/fixtures/rounds.jsonl). See that
+		// function's own comment for when it trusts the deck and when it
+		// falls back to BlackjackHandEval::EstimateBettingConfidence().
+		BlackjackHandEval::BettingConfidence DetermineBettingAdvice(rage::scrThread* thread, const bool (&seatWillPlay)[kSeatCount], std::int32_t mySeat)
 		{
-			if (!ownDrawsExact)
-			{
-				BlackjackHandEval::HandValue playerNow = BlackjackHandEval::EvaluateHand(playerHand.ranks, playerHand.count);
-				if (playerNow.blackjack)
-				{
-					BlackjackHandEval::HandValue dealerNow = BlackjackHandEval::EvaluateHand(dealerHand.ranks, dealerHand.count);
-					return dealerNow.blackjack ? BlackjackHandEval::BettingConfidence::Low : BlackjackHandEval::BettingConfidence::High;
-				}
-				return BlackjackHandEval::EstimateBettingConfidence(playerHand.ranks, playerHand.count, dealerHand.ranks[1]);
-			}
-
-			std::int32_t futureRanks[kFutureLookahead];
-			std::int32_t futureCount = 0;
-			for (; futureCount < kFutureLookahead; futureCount++)
-			{
-				std::int32_t idx = deckCursor + futureCount;
-				if (idx < 0 || idx >= deckCount)
-					break;
-				futureRanks[futureCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
-			}
-
-			BlackjackDeckSim::BettingAdvice advice = BlackjackDeckSim::EvaluateBettingConfidence(
-				playerHand.ranks, playerHand.count, dealerHand.ranks, dealerHand.count,
-				futureRanks, futureCount, canDouble, isLastSeatBeforeDealer);
-
-			if (advice.trustworthy)
-				return advice.confidence;
-
-			return BlackjackHandEval::EstimateBettingConfidence(playerHand.ranks, playerHand.count, dealerHand.ranks[1]);
+			std::int32_t deckRanks[kDeckSize];
+			for (std::int32_t i = 0; i < kDeckSize; i++)
+				deckRanks[i] = DeckCardLocal(thread, i).At(kCardRankField).AsInt32();
+			return BlackjackDeckSim::EvaluatePreDealBetting(deckRanks, kDeckSize, seatWillPlay, mySeat);
 		}
 
 		PredictedHand g_predictedDealerOutcome{};   // LIVE -- refreshed every tick, for the HUD (always the current best guess)
@@ -1727,15 +1679,30 @@ namespace BlackjackCheat
 		// UpdateCardCounting(), so the log line fires automatically during
 		// normal play with no F11 interaction needed. This is the single
 		// most useful piece of live evidence a future session can gather
-		// about whether kDeckSlot/kDeckCursorOffset and the turn-order
+		// about whether the deck chain (DeckLocal()) and the turn-order
 		// trace above are actually right, the same role PokerCheat's own
 		// "PredictionCheck ... MATCH" line played for poker_sp's deck (see
 		// that project's docs/JOURNAL.md).
+		// Does a round-start dealer draw-out prediction match the dealer's
+		// real final hand? Only the predicted draws are compared -- the
+		// first knownCount cards were real data when it was made.
+		bool PredictionMatches(const PredictedHand& predicted, const HandCards& actual)
+		{
+			if (predicted.totalCount != actual.count)
+				return false;
+			for (std::int32_t i = predicted.knownCount; i < predicted.totalCount; i++)
+			{
+				if (predicted.ranks[i] != actual.ranks[i])
+					return false;
+			}
+			return true;
+		}
+
 		void UpdateDeckPrediction(rage::scrThread* thread, const HandCards& dealerHand, bool dealerHasCards)
 		{
 			if (dealerHasCards)
 			{
-				std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
+				std::int32_t deckCursor = DeckLocal(thread).At(kDeckCursorField).AsInt32();
 				std::int32_t deckCount = ReadDeckCount(thread);
 				g_predictedDealerOutcome = SimulateDealerOutcome(thread, dealerHand, deckCursor, deckCount);
 
@@ -1754,18 +1721,7 @@ namespace BlackjackCheat
 				std::string actualStr = FormatCardRun(g_predictionLastDealerHand.ranks, g_predictionLastDealerHand.suits,
 					g_predictionBaseline.knownCount, g_predictionLastDealerHand.count);
 
-				bool match = (g_predictionBaseline.totalCount == g_predictionLastDealerHand.count);
-				if (match)
-				{
-					for (std::int32_t i = g_predictionBaseline.knownCount; i < g_predictionBaseline.totalCount; i++)
-					{
-						if (g_predictionBaseline.ranks[i] != g_predictionLastDealerHand.ranks[i])
-						{
-							match = false;
-							break;
-						}
-					}
-				}
+				bool match = PredictionMatches(g_predictionBaseline, g_predictionLastDealerHand);
 
 				Log::Write("PredictionCheck: dealer draw-out predicted-at-round-start=[ {}] actual=[ {}] {}",
 					predictedStr, actualStr,
@@ -1777,6 +1733,413 @@ namespace BlackjackCheat
 				g_predictionLastDealerHand = HandCards{};
 			}
 		}
+
+#ifdef _DEBUG
+		// Round log (user request): one JSONL line per hit/stand/double/
+		// split advice shown and one per round, appended to
+		// BlackjackCheat_rounds.jsonl next to BlackjackCheat.log -- see
+		// RoundRecord.h for the format and how a line becomes a test case
+		// in tests/fixtures/rounds.jsonl. Rolls over at kRollBytes to
+		// BlackjackCheat_rounds.1.jsonl (one old file kept). Debug-only,
+		// same as the PreDealCheck/PredictionCheck lines it extends.
+		//
+		// Starts at the live dealer hand's 0 -> dealt edge. The live table
+		// never shows a round's end (the last action, the dealer's
+		// draw-out, the payout and the reset all happen in one script
+		// tick -- see DisplayedTableLocal()), so after the live table resets
+		// this keeps following the presentation copy, which lags behind
+		// while the end-of-round animation plays, and takes the end state
+		// from its last snapshot before it resets too. The last live state
+		// is recorded alongside ("liveLast*") so the two can be compared.
+		namespace RoundRecorder
+		{
+			constexpr std::uintmax_t kRollBytes = 4 * 1024 * 1024;
+			constexpr ULONGLONG kDisplayWaitMs = 30000; // give up on the presentation copy after this long
+
+			// My hand(s) and the dealer's, as read from one copy of the table.
+			struct TableView
+			{
+				bool valid = false;
+				std::int32_t handCount = 0;
+				HandCards myHands[kMaxHandsPerSeat] = {};
+				HandCards dealerHand{};
+			};
+
+			struct State
+			{
+				bool active = false;
+				std::string id;
+				std::int32_t mySeat = -1;
+				std::int32_t seatsDealt[kSeatCount] = {};
+				std::int32_t deckRanks[kDeckSize] = {};
+				std::int32_t deckSuits[kDeckSize] = {};
+				std::string betting; // pre-deal betting advice shown, empty if none was
+				std::int32_t bankrollBeforeRound = -1; // bankroll + bet during betting; -1 = never saw the betting phase
+				std::int32_t bet = 0;
+				std::int32_t bankrollAfter = 0;
+				std::int32_t myLiveHandRaw[kHandStride] = {}; // my hand 0 struct's raw words, last live tick -- see LocateTableCopies()
+				bool haveLiveHandRaw = false;
+				std::int32_t lastDisplayedDealerCount = -1;
+				TableView live;      // last complete live state
+				TableView displayed; // last complete presentation-copy state
+				bool liveEnded = false;
+				ULONGLONG liveEndedAt = 0;
+				PredictedHand predicted{};
+				bool havePrediction = false;
+				std::vector<std::string> lines; // decision lines, written ahead of the round line
+				std::int32_t lastDecisionKey = -1;
+			};
+
+			State g_state;
+			std::string g_bettingShown; // latest pre-deal betting advice, carried into the round at the deal
+			std::int32_t g_bettingBankroll = -1; // my bankroll + bet, sampled every betting-phase tick
+			std::int32_t g_bettingBet = 0;
+
+			std::string_view ConfidenceName(BlackjackHandEval::BettingConfidence confidence)
+			{
+				switch (confidence)
+				{
+					case BlackjackHandEval::BettingConfidence::High: return "High";
+					case BlackjackHandEval::BettingConfidence::Medium: return "Medium";
+					default: return "Low";
+				}
+			}
+
+			std::string_view ActionName(BlackjackHandEval::Action action)
+			{
+				switch (action)
+				{
+					case BlackjackHandEval::Action::Hit: return "Hit";
+					case BlackjackHandEval::Action::Double: return "Double";
+					case BlackjackHandEval::Action::Split: return "Split";
+					default: return "Stand";
+				}
+			}
+
+			std::string_view OutcomeName(BlackjackDeckSim::Outcome outcome)
+			{
+				switch (outcome)
+				{
+					case BlackjackDeckSim::Outcome::Win: return "Win";
+					case BlackjackDeckSim::Outcome::Push: return "Push";
+					default: return "Loss";
+				}
+			}
+
+			std::string SpacedCards(const std::int32_t* ranks, const std::int32_t* suits, std::int32_t count)
+			{
+				std::string out;
+				for (std::int32_t i = 0; i < count; i++)
+				{
+					if (i)
+						out += ' ';
+					out += FormatCard(ranks[i], suits[i]);
+				}
+				return out;
+			}
+
+			std::string Timestamp()
+			{
+				SYSTEMTIME t;
+				GetLocalTime(&t);
+				std::ostringstream out;
+				out << std::setfill('0')
+					<< std::setw(4) << t.wYear << '-' << std::setw(2) << t.wMonth << '-' << std::setw(2) << t.wDay
+					<< 'T' << std::setw(2) << t.wHour << ':' << std::setw(2) << t.wMinute << ':' << std::setw(2) << t.wSecond
+					<< '.' << std::setw(3) << t.wMilliseconds;
+				return out.str();
+			}
+
+			const std::wstring& RoundsPath()
+			{
+				static const std::wstring path = LogFallback::Resolve(
+					LogFallback::ModuleDirectory(), L"BlackjackCheat_rounds.jsonl", LogFallback::FallbackDirectory()).path;
+				return path;
+			}
+
+			void AppendLines(const std::vector<std::string>& lines)
+			{
+				const std::filesystem::path path(RoundsPath());
+				if (path.empty())
+					return;
+
+				std::error_code ec;
+				const std::uintmax_t size = std::filesystem::file_size(path, ec);
+				if (!ec && size >= kRollBytes)
+				{
+					std::filesystem::path rolled = path;
+					rolled.replace_extension(L".1.jsonl");
+					std::filesystem::remove(rolled, ec);
+					std::filesystem::rename(path, rolled, ec);
+				}
+
+				std::ofstream file(path, std::ios::app);
+				for (const std::string& line : lines)
+					file << line << '\n';
+			}
+
+			void NoteBettingShown(BlackjackHandEval::BettingConfidence confidence)
+			{
+				g_bettingShown = ConfidenceName(confidence);
+			}
+
+			void Begin(rage::scrThread* thread, std::int32_t mySeat)
+			{
+				g_state = State{};
+				g_state.active = true;
+				g_state.id = Timestamp();
+				g_state.mySeat = mySeat;
+				g_state.betting = g_bettingShown;
+				g_bettingShown.clear();
+
+				for (std::int32_t i = 0; i < kDeckSize; i++)
+				{
+					g_state.deckRanks[i] = DeckCardLocal(thread, i).At(kCardRankField).AsInt32();
+					g_state.deckSuits[i] = DeckCardLocal(thread, i).At(kCardSuitField).AsInt32();
+				}
+
+				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
+				{
+					ScriptLocal seatBase = SeatLocal(thread, seat);
+					g_state.seatsDealt[seat] = (seatBase.At(kSeatOccupiedField).AsInt32() != -1 && seatBase.At(kSeatHandCountField).AsInt32() > 0) ? 1 : 0;
+				}
+
+				// Bankroll from the betting phase, not now: a natural is paid
+				// (and its bet zeroed) in the same tick as the deal. The bet
+				// itself only lands in f_4[0] at the deal (live: it read 0
+				// all through betting on a $500 round), so read it now and
+				// fall back to the betting-phase value for a natural.
+				ScriptLocal mySeatBase = SeatLocal(thread, static_cast<std::uint32_t>(mySeat));
+				std::int32_t betAtDeal = SeatBetLocal(mySeatBase, 0).AsInt32();
+				g_state.bankrollBeforeRound = g_bettingBankroll;
+				g_state.bet = betAtDeal > 0 ? betAtDeal : g_bettingBet;
+				g_bettingBankroll = -1;
+				g_bettingBet = 0;
+			}
+
+			// Diagnostic for the presentation copy: the live table has just
+			// reset, so look for every copy of my last live hand's raw words
+			// still on the stack. Each match is reported as the table copy
+			// it belongs to, in decompiled uLocal_14.f_N terms -- expect
+			// f_17 (DisplayedTableLocal) and f_286 (its incoming twin).
+			// Found both on the first live run.
+			void LocateTableCopies(rage::scrThread* thread)
+			{
+				if (!g_state.haveLiveHandRaw)
+					return;
+
+				std::ostringstream matches;
+				std::int32_t found = 0;
+				const std::uint32_t stackSize = thread->m_Context.m_StackSize;
+				for (std::uint32_t slot = 0; slot + kHandStride <= stackSize && found < 8; slot++)
+				{
+					bool match = true;
+					for (std::uint32_t i = 0; i < kHandStride && match; i++)
+						match = ScriptLocal(thread, slot + i).AsInt32() == g_state.myLiveHandRaw[i];
+					if (!match)
+						continue;
+
+					// Rebase to the table copy this hand would belong to: my
+					// hand's offset inside any table-shaped struct.
+					const std::int64_t handOffsetInTable = SeatHandLocal(SeatLocal(ScriptLocal(nullptr, 0), static_cast<std::uint32_t>(g_state.mySeat)), 0).Index();
+					const std::int64_t copyBase = static_cast<std::int64_t>(slot) - handOffsetInTable;
+					matches << (found ? ", " : "") << "slot " << slot << " (table copy at uLocal_14.f_" << (copyBase - kRootLocalIndex) << ")";
+					found++;
+				}
+
+				Log::Write("RoundRecorder: live table reset; my last live hand's raw block found at: {} -- expected table copies at uLocal_14.f_{} (presentation) and f_{} (incoming)",
+					found ? matches.str() : std::string("nowhere"), kDisplayedTableField, kIncomingTableField);
+			}
+
+			// Reads my hands and the dealer's from one table-shaped struct
+			// (the live table or the presentation copy). Returns the
+			// dealer's card count (0 = that copy has been reset), updating
+			// `view` only when the read is complete.
+			std::int32_t ReadTableView(const ScriptLocal& table, TableView& view)
+			{
+				HandCards dealerHand = ReadHand(DealerHandLocal(table));
+				if (dealerHand.count <= 0)
+					return 0;
+
+				ScriptLocal mySeatBase = SeatLocal(table, static_cast<std::uint32_t>(g_state.mySeat));
+				std::int32_t handCount = mySeatBase.At(kSeatHandCountField).AsInt32();
+				if (handCount <= 0 || handCount > static_cast<std::int32_t>(kMaxHandsPerSeat))
+					return dealerHand.count;
+
+				TableView next;
+				next.valid = true;
+				next.handCount = handCount;
+				next.dealerHand = dealerHand;
+				for (std::int32_t h = 0; h < handCount; h++)
+					next.myHands[h] = ReadHand(SeatHandLocal(mySeatBase, static_cast<std::uint32_t>(h)));
+				if (next.myHands[0].count <= 0)
+					return dealerHand.count; // mid-reset -- keep the last complete snapshot
+
+				view = next;
+				return dealerHand.count;
+			}
+
+			std::vector<std::string> HandStrings(const TableView& view)
+			{
+				std::vector<std::string> hands;
+				for (std::int32_t h = 0; h < view.handCount; h++)
+					hands.push_back(SpacedCards(view.myHands[h].ranks, view.myHands[h].suits, view.myHands[h].count));
+				return hands;
+			}
+
+			void Finish()
+			{
+				// The presentation copy's last snapshot is the real end
+				// state; fall back to the last live state if it never
+				// produced one (e.g. the round ended before it caught up).
+				const bool fromDisplayed = g_state.displayed.valid;
+				const TableView& end = fromDisplayed ? g_state.displayed : g_state.live;
+				const HandCards& dealer = end.dealerHand;
+				BlackjackHandEval::HandValue dealerValue = BlackjackHandEval::EvaluateHand(dealer.ranks, dealer.count);
+
+				std::vector<std::string> hands = HandStrings(end);
+				std::vector<std::string> outcomes;
+				for (std::int32_t h = 0; h < end.handCount; h++)
+				{
+					const HandCards& hand = end.myHands[h];
+					BlackjackDeckSim::Outcome outcome = BlackjackDeckSim::CompareOutcome(
+						BlackjackHandEval::EvaluateHand(hand.ranks, hand.count), dealerValue, /*playerNaturalCounts*/ end.handCount == 1);
+					outcomes.push_back(std::string(OutcomeName(outcome)));
+				}
+
+				RoundRecord::JsonLine line;
+				line.Add("type", "round")
+					.Add("id", g_state.id)
+					.Add("mySeat", std::int64_t{ g_state.mySeat })
+					.Add("seatsDealt", g_state.seatsDealt, static_cast<std::int32_t>(kSeatCount))
+					.Add("deckRanks", g_state.deckRanks, kDeckSize)
+					.Add("deck", SpacedCards(g_state.deckRanks, g_state.deckSuits, kDeckSize));
+				if (!g_state.betting.empty())
+					line.Add("betting", g_state.betting);
+				// net: bankroll after the round minus bankroll before the bet
+				// (the bet is already deducted by the deal) -- the game's own
+				// payout, independent of any card reading.
+				line.Add("myHands", hands)
+					.Add("outcomes", outcomes)
+					.Add("dealer", SpacedCards(dealer.ranks, dealer.suits, dealer.count))
+					.Add("dealerTotal", std::int64_t{ dealerValue.total })
+					.Add("endStateFrom", fromDisplayed ? "displayed" : "live")
+					.Add("liveLastHands", HandStrings(g_state.live))
+					.Add("liveLastDealer", SpacedCards(g_state.live.dealerHand.ranks, g_state.live.dealerHand.suits, g_state.live.dealerHand.count));
+				if (g_state.havePrediction)
+				{
+					line.Add("dealerPredicted", SpacedCards(g_state.predicted.ranks, g_state.predicted.suits, g_state.predicted.totalCount))
+						.Add("dealerPredictionMatch", PredictionMatches(g_state.predicted, dealer));
+				}
+				line.Add("bet", std::int64_t{ g_state.bet })
+					.Add("bankrollAfter", std::int64_t{ g_state.bankrollAfter });
+				if (g_state.bankrollBeforeRound >= 0)
+				{
+					line.Add("bankrollBeforeRound", std::int64_t{ g_state.bankrollBeforeRound })
+						.Add("net", std::int64_t{ g_state.bankrollAfter } - g_state.bankrollBeforeRound);
+				}
+
+				g_state.lines.push_back(line.Str());
+				AppendLines(g_state.lines);
+				g_state = State{};
+			}
+
+			// Called every tick, before UpdateDeckPrediction() (so the
+			// round-start prediction is still there on the round's last live tick).
+			void Tick(rage::scrThread* thread, std::int32_t mySeat, bool dealerHasCards)
+			{
+				// After the live reset: follow the presentation copy until it
+				// resets too, the next round is dealt, or it's taken too long.
+				if (g_state.active && g_state.liveEnded)
+				{
+					std::int32_t displayedDealerCount = ReadTableView(DisplayedTableLocal(thread), g_state.displayed);
+					if (displayedDealerCount != g_state.lastDisplayedDealerCount)
+					{
+						Log::Write("RoundRecorder: presentation copy dealer card count {} -> {} (my view valid={})",
+							g_state.lastDisplayedDealerCount, displayedDealerCount, g_state.displayed.valid);
+						g_state.lastDisplayedDealerCount = displayedDealerCount;
+					}
+					if (displayedDealerCount == 0 || dealerHasCards || GetTickCount64() - g_state.liveEndedAt > kDisplayWaitMs)
+						Finish();
+				}
+
+				const bool mySeatValid = mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount);
+				if (!dealerHasCards && mySeatValid)
+				{
+					ScriptLocal seatBase = SeatLocal(thread, static_cast<std::uint32_t>(mySeat));
+					g_bettingBet = SeatBetLocal(seatBase, 0).AsInt32();
+					g_bettingBankroll = seatBase.At(kSeatBankrollField).AsInt32() + g_bettingBet;
+				}
+
+				if (dealerHasCards && !g_state.active && mySeatValid)
+					Begin(thread, mySeat);
+
+				if (!g_state.active || g_state.liveEnded)
+					return;
+
+				if (dealerHasCards)
+				{
+					if (ReadTableView(LiveTableLocal(thread), g_state.live) > 0 && g_state.live.valid)
+					{
+						ScriptLocal hand = SeatHandLocal(SeatLocal(thread, static_cast<std::uint32_t>(g_state.mySeat)), 0);
+						for (std::uint32_t i = 0; i < kHandStride; i++)
+							g_state.myLiveHandRaw[i] = hand.At(i).AsInt32();
+						g_state.haveLiveHandRaw = true;
+					}
+					if (g_predictionRoundActive)
+					{
+						g_state.predicted = g_predictionBaseline;
+						g_state.havePrediction = true;
+					}
+					return;
+				}
+
+				// Live reset: the payout is already in the bankroll now (it
+				// happened in the same tick), and nothing has been bet yet.
+				ScriptLocal mySeatBase = SeatLocal(thread, static_cast<std::uint32_t>(g_state.mySeat));
+				g_state.bankrollAfter = mySeatBase.At(kSeatBankrollField).AsInt32();
+				g_state.liveEnded = true;
+				g_state.liveEndedAt = GetTickCount64();
+				LocateTableCopies(thread);
+				g_state.lastDisplayedDealerCount = ReadTableView(DisplayedTableLocal(thread), g_state.displayed);
+				Log::Write("RoundRecorder: presentation copy dealer card count at live reset = {} (my view valid={})",
+					g_state.lastDisplayedDealerCount, g_state.displayed.valid);
+			}
+
+			// One line per advice shown for a given (hand, card count) --
+			// i.e. per decision point, not per tick.
+			void NoteDecision(rage::scrThread* thread, std::int32_t handIndex, const HandCards& hand, const HandCards& dealerHand,
+				std::int32_t deckCursor, std::int32_t deckCount, bool canDouble, bool canSplit, bool isSplitAceHand, bool isLastSeatBeforeDealer,
+				BlackjackHandEval::Action action)
+			{
+				if (!g_state.active)
+					return;
+				std::int32_t key = handIndex * 100 + hand.count;
+				if (key == g_state.lastDecisionKey)
+					return;
+				g_state.lastDecisionKey = key;
+
+				std::int32_t futureRanks[kFutureLookahead];
+				std::int32_t futureCount = ReadFutureRanks(thread, deckCursor, deckCount, futureRanks);
+
+				RoundRecord::JsonLine line;
+				line.Add("type", "decision")
+					.Add("round", g_state.id)
+					.Add("hand", std::int64_t{ handIndex })
+					.Add("cards", SpacedCards(hand.ranks, hand.suits, hand.count))
+					.Add("dealer", SpacedCards(dealerHand.ranks, dealerHand.suits, dealerHand.count))
+					.Add("playerRanks", hand.ranks, hand.count)
+					.Add("dealerRanks", dealerHand.ranks, dealerHand.count)
+					.Add("futureRanks", futureRanks, futureCount)
+					.Add("canDouble", canDouble)
+					.Add("canSplit", canSplit)
+					.Add("isSplitAceHand", isSplitAceHand)
+					.Add("isLastBeforeDealer", isLastSeatBeforeDealer)
+					.Add("action", ActionName(action));
+				g_state.lines.push_back(line.Str());
+			}
+		}
+#endif
 
 #ifdef _DEBUG
 		constexpr int kPanelR = 22, kPanelG = 18, kPanelB = 14, kPanelA = 205;
@@ -2126,7 +2489,7 @@ namespace BlackjackCheat
 			// logged fallback/comparison only until its own -1 result is
 			// understood (kPedSceneSlot/kSeatPedArrayOffset/kSeatPedStride
 			// were never live-confirmed, unlike the Session 6 offsets).
-			std::int32_t mySeat = ReadInt(thread, kMySeatSlot);
+			std::int32_t mySeat = MySeatLocal(thread).AsInt32();
 			if (mySeat < 0 || mySeat >= static_cast<std::int32_t>(kSeatCount))
 				mySeat = FindMySeatByPed(thread);
 
@@ -2151,8 +2514,8 @@ namespace BlackjackCheat
 			{
 				for (std::uint32_t higherSeat = static_cast<std::uint32_t>(mySeat) + 1; higherSeat < kSeatCount; higherSeat++)
 				{
-					std::uint32_t higherSeatBase = kTableSlot + kSeatsBase + higherSeat * kSeatStride;
-					if (ReadInt(thread, higherSeatBase + kSeatOccupiedOffset) != -1)
+					ScriptLocal higherSeatBase = SeatLocal(thread, higherSeat);
+					if (higherSeatBase.At(kSeatOccupiedField).AsInt32() != -1)
 					{
 						isMySeatLastBeforeDealer = false;
 						break;
@@ -2172,28 +2535,26 @@ namespace BlackjackCheat
 			// "Not done" below is f_3 < f_59 -- the same test func_1063
 			// uses for case 4's own "next seat to play" scan (Session 5),
 			// so it can't disagree with the game about whose turn it is.
-			// A seat with no hands (0) isn't playing this round. Pre-deal, hasOccupiedLowerSeat alone is
-			// what matters (every occupied lower seat is going to act
-			// first).
-			bool hasOccupiedLowerSeat = false;
+			// A seat with no hands (0) isn't playing this round. (Pre-deal
+			// betting advice works from the predicted deal instead -- see
+			// BlackjackDeckSim::EvaluatePreDealBetting().)
 			bool lowerSeatsDone = true;
 			if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
 			{
 				for (std::uint32_t lowerSeat = 0; lowerSeat < static_cast<std::uint32_t>(mySeat); lowerSeat++)
 				{
-					std::uint32_t lowerSeatBase = kTableSlot + kSeatsBase + lowerSeat * kSeatStride;
-					if (ReadInt(thread, lowerSeatBase + kSeatOccupiedOffset) == -1)
+					ScriptLocal lowerSeatBase = SeatLocal(thread, lowerSeat);
+					if (lowerSeatBase.At(kSeatOccupiedField).AsInt32() == -1)
 						continue;
 
-					hasOccupiedLowerSeat = true;
-					std::int32_t lowerHandCount = ReadInt(thread, lowerSeatBase + kSeatHandCountOffset);
-					std::int32_t lowerCurrentHand = ReadInt(thread, lowerSeatBase + kSeatCurrentHandIndexOffset);
+					std::int32_t lowerHandCount = lowerSeatBase.At(kSeatHandCountField).AsInt32();
+					std::int32_t lowerCurrentHand = lowerSeatBase.At(kSeatCurrentHandField).AsInt32();
 					if (lowerHandCount > 0 && lowerCurrentHand < lowerHandCount)
 						lowerSeatsDone = false;
 				}
 			}
 
-			HandCards dealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
+			HandCards dealerHand = ReadHand(DealerHandLocal(LiveTableLocal(thread)));
 			bool dealerHasCards = dealerHand.count > 0;
 
 			// User request: the dealer's hole-card icon (see the
@@ -2208,16 +2569,19 @@ namespace BlackjackCheat
 			// its own comment for the live evidence) -- read once here
 			// and reused below for both this and IsAtBettingPhase's own
 			// (separate) read.
-			std::int32_t roundPhase = ReadInt(thread, kTableSlot + kRoundPhaseOffset);
+			std::int32_t roundPhase = LiveTableLocal(thread).At(kTableRoundPhaseField).AsInt32();
 			bool roundResolving = (roundPhase == 8);
 
+#ifdef _DEBUG
+			RoundRecorder::Tick(thread, mySeat, dealerHasCards);
+#endif
 			UpdateDeckPrediction(thread, dealerHand, dealerHasCards);
 
 			// Read once, reused by the cheat-action simulation, the "Next
 			// card" line, and insurance below -- all three need the exact
 			// same live cursor/count snapshot to stay consistent with each
 			// other within a single tick.
-			std::int32_t liveDeckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
+			std::int32_t liveDeckCursor = DeckLocal(thread).At(kDeckCursorField).AsInt32();
 			std::int32_t liveDeckCount = ReadDeckCount(thread);
 
 			const Config::Values& cfg = Config::Get();
@@ -2271,12 +2635,12 @@ namespace BlackjackCheat
 				std::string turnLine = "Turn f_3/f_59:";
 				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 				{
-					std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-					if (ReadInt(thread, seatBase + kSeatOccupiedOffset) == -1)
+					ScriptLocal seatBase = SeatLocal(thread, seat);
+					if (seatBase.At(kSeatOccupiedField).AsInt32() == -1)
 						continue;
 					turnLine += " s" + std::to_string(seat) + (static_cast<std::int32_t>(seat) == mySeat ? "(me)=" : "=")
-						+ std::to_string(ReadInt(thread, seatBase + kSeatCurrentHandIndexOffset)) + "/"
-						+ std::to_string(ReadInt(thread, seatBase + kSeatHandCountOffset));
+						+ std::to_string(seatBase.At(kSeatCurrentHandField).AsInt32()) + "/"
+						+ std::to_string(seatBase.At(kSeatHandCountField).AsInt32());
 				}
 				turnLine += std::string(" lowerDone=") + (lowerSeatsDone ? "yes" : "no");
 				DrawLine(x, y, turnLine);
@@ -2350,8 +2714,8 @@ namespace BlackjackCheat
 						std::int32_t idx = preDeal.cursorAfterDeal + i;
 						if (idx < 0 || idx >= liveDeckCount)
 							break;
-						nextRanks[nextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
-						nextSuits[nextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+						nextRanks[nextCount] = DeckCardLocal(thread, idx).At(kCardRankField).AsInt32();
+						nextSuits[nextCount] = DeckCardLocal(thread, idx).At(kCardSuitField).AsInt32();
 						nextCount++;
 					}
 					if (nextCount > 0)
@@ -2424,8 +2788,8 @@ namespace BlackjackCheat
 					std::int32_t idx = preDeal.cursorAfterDeal + i;
 					if (idx < 0 || idx >= liveDeckCount)
 						break;
-					preDealNextRanks[preDealNextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
-					preDealNextSuits[preDealNextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+					preDealNextRanks[preDealNextCount] = DeckCardLocal(thread, idx).At(kCardRankField).AsInt32();
+					preDealNextSuits[preDealNextCount] = DeckCardLocal(thread, idx).At(kCardSuitField).AsInt32();
 					preDealNextCount++;
 				}
 				if (preDealNextCount > 0)
@@ -2451,10 +2815,10 @@ namespace BlackjackCheat
 			// for the hand that hasn't been dealt.
 			if (cfg.ShowBettingAdvice && preDeal.valid && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount) && preDeal.seatWillPlay[mySeat])
 			{
-				BlackjackHandEval::BettingConfidence preDealBettingConfidence = DetermineBettingAdvice(
-					thread, preDeal.seatHands[mySeat], preDeal.dealerHand,
-					preDeal.cursorAfterDeal, liveDeckCount, /*canDouble=*/true, isMySeatLastBeforeDealer,
-					/*ownDrawsExact=*/!hasOccupiedLowerSeat);
+				BlackjackHandEval::BettingConfidence preDealBettingConfidence = DetermineBettingAdvice(thread, preDeal.seatWillPlay, mySeat);
+#ifdef _DEBUG
+				RoundRecorder::NoteBettingShown(preDealBettingConfidence);
+#endif
 				DrawBettingAdviceStatus(preDealBettingConfidence);
 			}
 
@@ -2483,12 +2847,12 @@ namespace BlackjackCheat
 
 			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
-				std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-				std::int32_t occupiedMarker = ReadInt(thread, seatBase + kSeatOccupiedOffset);
+				ScriptLocal seatBase = SeatLocal(thread, seat);
+				std::int32_t occupiedMarker = seatBase.At(kSeatOccupiedField).AsInt32();
 				if (occupiedMarker == -1)
 					continue;
 
-				std::int32_t handCount = ReadInt(thread, seatBase + kSeatHandCountOffset);
+				std::int32_t handCount = seatBase.At(kSeatHandCountField).AsInt32();
 				if (handCount <= 0)
 					continue;
 				if (handCount > static_cast<std::int32_t>(kMaxHandsPerSeat))
@@ -2513,15 +2877,15 @@ namespace BlackjackCheat
 				// showing advice while later seats drew; and while a lower
 				// seat was still playing, advice assumed the next card was
 				// mine when that seat was about to take it.
-				std::int32_t currentHandIndex = ReadInt(thread, seatBase + kSeatCurrentHandIndexOffset);
+				std::int32_t currentHandIndex = seatBase.At(kSeatCurrentHandField).AsInt32();
 				myCurrentHandIndex = currentHandIndex;
 				myHandCount = handCount;
 				const bool isMyTurn = lowerSeatsDone && currentHandIndex >= 0 && currentHandIndex < handCount;
 
 				for (std::int32_t h = 0; h < handCount; h++)
 				{
-					std::uint32_t handSlot = seatBase + kSeatHandsOffset + static_cast<std::uint32_t>(h) * kHandStride;
-					HandCards hand = ReadHand(thread, handSlot);
+					ScriptLocal handSlot = SeatHandLocal(seatBase, static_cast<std::uint32_t>(h));
+					HandCards hand = ReadHand(handSlot);
 					if (hand.count <= 0)
 						continue;
 
@@ -2566,8 +2930,8 @@ namespace BlackjackCheat
 					// equal to the first, so it needs the same
 					// bankroll >= bet check -- canSplit used to check
 					// only card count and the one-split cap.
-					std::int32_t bankroll = ReadInt(thread, seatBase + kSeatBankrollOffset);
-					std::int32_t bet = ReadInt(thread, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h));
+					std::int32_t bankroll = seatBase.At(kSeatBankrollField).AsInt32();
+					std::int32_t bet = SeatBetLocal(seatBase, static_cast<std::uint32_t>(h)).AsInt32();
 					const bool canAffordSecondBet = bankroll >= bet;
 					bool canDouble = (hand.count == 2) && canAffordSecondBet;
 					bool canSplit = (hand.count == 2 && handCount < static_cast<std::int32_t>(kMaxHandsPerSeat)) && canAffordSecondBet;
@@ -2590,6 +2954,9 @@ namespace BlackjackCheat
 					{
 						bestAction = DetermineAdvice(thread, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isLastBeforeDealer); // Session 7 fourth/sixth addendum: deck-derived simulation (BlackjackDeckSim.h), not blind basic strategy -- see that function's own header comment. isMySeatLastBeforeDealer: Session 9 second live bug fix, see DetermineAdvice()'s own header comment
 						haveAdvice = true;
+#ifdef _DEBUG
+						RoundRecorder::NoteDecision(thread, h, hand, dealerHand, liveDeckCursor, liveDeckCount, canDouble, canSplit, isSplitAceHand, isLastBeforeDealer, bestAction);
+#endif
 					}
 				}
 			}
@@ -2608,8 +2975,8 @@ namespace BlackjackCheat
 					std::int32_t idx = liveDeckCursor + i;
 					if (idx < 0 || idx >= liveDeckCount)
 						break;
-					nextRanks[nextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
-					nextSuits[nextCount] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+					nextRanks[nextCount] = DeckCardLocal(thread, idx).At(kCardRankField).AsInt32();
+					nextSuits[nextCount] = DeckCardLocal(thread, idx).At(kCardSuitField).AsInt32();
 					nextCount++;
 				}
 				if (nextCount > 0)
@@ -2649,13 +3016,13 @@ namespace BlackjackCheat
 			bool insuranceWindowOpen = false;
 			if (dealerHand.count == 2 && myHandCount == 1 && myCurrentHandIndex < 0 && myFirstHandCardCount == 2
 				&& mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount)
-				&& ReadInt(thread, kTableSlot + kSeatsBase + static_cast<std::uint32_t>(mySeat) * kSeatStride + kSeatInsuranceOffset) == -1)
+				&& SeatLocal(thread, static_cast<std::uint32_t>(mySeat)).At(kSeatInsuranceField).AsInt32() == -1)
 			{
 				std::int32_t dealtSeats = 0;
 				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 				{
-					std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-					if (ReadInt(thread, seatBase + kSeatOccupiedOffset) != -1 && ReadInt(thread, seatBase + kSeatHandCountOffset) > 0)
+					ScriptLocal seatBase = SeatLocal(thread, seat);
+					if (seatBase.At(kSeatOccupiedField).AsInt32() != -1 && seatBase.At(kSeatHandCountField).AsInt32() > 0)
 						dealtSeats++;
 				}
 				insuranceWindowOpen = liveDeckCursor == dealtSeats * 2 + 2;
@@ -2689,56 +3056,56 @@ namespace BlackjackCheat
 			reinterpret_cast<unsigned long long>(thread->m_Stack),
 			thread->m_Context.m_StackSize);
 
-		std::int32_t roundState = ReadInt(thread, kTableSlot + kRoundStateOffset);
-		std::int32_t roundResolvingState = ReadInt(thread, kTableSlot + kRoundResolvingOffset);
-		std::int32_t roundPhaseState = ReadInt(thread, kTableSlot + kRoundPhaseOffset);
-		Log::Write("ProbeTableStruct: round phase (f_701, slot {}, EMPIRICAL, see kRoundPhaseOffset's own comment) = {} (1=sat down, 2=waiting for bet, 3=bet placed/dealing, 7=a seat deciding, 8=dealer resolving/end of round); round state (f_579, slot {}, CONFIRMED LIVE) = {} (0/5); round resolving (f_580, slot {}, CONFIRMED LIVE) = {} (1/0)",
-			kTableSlot + kRoundPhaseOffset, roundPhaseState, kTableSlot + kRoundStateOffset, roundState, kTableSlot + kRoundResolvingOffset, roundResolvingState);
+		std::int32_t roundState = LiveTableLocal(thread).At(kTableRoundStateField).AsInt32();
+		std::int32_t roundResolvingState = LiveTableLocal(thread).At(kTableAnimationLockField).AsInt32();
+		std::int32_t roundPhaseState = LiveTableLocal(thread).At(kTableRoundPhaseField).AsInt32();
+		Log::Write("ProbeTableStruct: round phase (table.f_702, slot {}, EMPIRICAL, see kTableRoundPhaseField) = {} (1=sat down, 2=waiting for bet, 3=bet placed/dealing, 7=a seat deciding, 8=dealer resolving/end of round); round state (table.f_580, slot {}, CONFIRMED LIVE) = {} (0/5); animation lock (table.f_581, slot {}, CONFIRMED LIVE) = {} (1/0)",
+			LiveTableLocal(thread).At(kTableRoundPhaseField).Index(), roundPhaseState, LiveTableLocal(thread).At(kTableRoundStateField).Index(), roundState, LiveTableLocal(thread).At(kTableAnimationLockField).Index(), roundResolvingState);
 
-		std::int32_t mySeatByF9 = ReadInt(thread, kMySeatSlot);
+		std::int32_t mySeatByF9 = MySeatLocal(thread).AsInt32();
 		std::int32_t mySeat = FindMySeatByPed(thread);
-		Log::Write("ProbeTableStruct: mySeat candidates -- f_9 (slot {}, CONFIRMED LIVE) = {}, ped-array match (FindMySeatByPed, returned -1 live in Session 18 -- unreliable) = {}{}",
-			kMySeatSlot, mySeatByF9, mySeat, (mySeatByF9 == mySeat) ? "  <-- AGREE" : "  <-- DISAGREE, worth re-checking against the real screen");
+		Log::Write("ProbeTableStruct: mySeat candidates -- f_9 (slot {}, CONFIRMED LIVE) = {}, ped-array match (FindMySeatByPed, CONFIRMED LIVE) = {}{}",
+			MySeatLocal(thread).Index(), mySeatByF9, mySeat, (mySeatByF9 == mySeat) ? "  <-- AGREE" : "  <-- DISAGREE, worth re-checking against the real screen");
 
-		Log::Write("ProbeTableStruct: seat ped handles (uLocal_14.f_1724+946, stride 46, slot base {}):", kPedSceneSlot + kSeatPedArrayOffset);
+		Log::Write("ProbeTableStruct: seat ped handles (uLocal_14.f_1724.f_946[seat /*46*/], seat 0 at slot {}):", SeatPedLocal(thread, 0).Index());
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 		{
-			std::int32_t pedHandle = ReadInt(thread, kPedSceneSlot + kSeatPedArrayOffset + seat * kSeatPedStride);
+			std::int32_t pedHandle = SeatPedLocal(thread, seat).AsInt32();
 			Log::Write("  seat {} ped handle = {}{}", seat, pedHandle, (static_cast<std::int32_t>(seat) == mySeat) ? "  <-- matches PLAYER::PLAYER_PED_ID()" : "");
 		}
 
-		HandCards dealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
+		HandCards dealerHand = ReadHand(DealerHandLocal(LiveTableLocal(thread)));
 		std::string dealerStr = FormatHandCards(dealerHand);
-		std::int32_t dealerValueField = ReadInt(thread, kTableSlot + kDealerHandOffset + kHandValueOffset);
-		Log::Write("ProbeTableStruct: dealer hand (Table.f_2, slot {}) count={} cards=[ {}] rawValueField(f_24)={}",
-			kTableSlot + kDealerHandOffset, dealerHand.count, dealerStr, dealerValueField);
+		std::int32_t dealerValueField = DealerHandLocal(LiveTableLocal(thread)).At(kHandValueField).AsInt32();
+		Log::Write("ProbeTableStruct: dealer hand (table.f_2, struct at slot {}) count={} cards=[ {}] rawValueField(f_24)={}",
+			DealerHandLocal(LiveTableLocal(thread)).Index(), dealerHand.count, dealerStr, dealerValueField);
 
-		std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
-		std::int32_t deckCount = ReadInt(thread, kDeckSlot + kDeckCountOffset);
-		Log::Write("ProbeTableStruct: deck (Table.f_592, slot {}) cursor={} count={} (expect count=52 mid-round) -- next 4 undrawn cards:",
-			kDeckSlot, deckCursor, deckCount);
+		std::int32_t deckCursor = DeckLocal(thread).At(kDeckCursorField).AsInt32();
+		std::int32_t deckCount = DeckLocal(thread).At(kDeckCountField).AsInt32();
+		Log::Write("ProbeTableStruct: deck (table.f_592, struct at slot {}) cursor={} count={} (expect count=52 mid-round) -- next 4 undrawn cards:",
+			DeckLocal(thread).Index(), deckCursor, deckCount);
 		for (std::int32_t i = 0; i < 4; i++)
 		{
 			std::int32_t idx = deckCursor + i;
 			if (idx < 0 || idx >= deckCount)
 				break;
-			std::int32_t rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
-			std::int32_t suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+			std::int32_t rank = DeckCardLocal(thread, idx).At(kCardRankField).AsInt32();
+			std::int32_t suit = DeckCardLocal(thread, idx).At(kCardSuitField).AsInt32();
 			Log::Write("  deck[{}]: {}{}", idx, RankName(rank), SuitLetter(suit));
 		}
 
-		Log::Write("ProbeTableStruct: seats (Table.f_27, base slot {}, stride {}, count {}):",
-			kTableSlot + kSeatsBase, kSeatStride, kSeatCount);
+		Log::Write("ProbeTableStruct: seats (table.f_27[seat /*60*/], seat 0 at slot {}, count {}):",
+			SeatLocal(thread, 0).Index(), kSeatCount);
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 		{
-			std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-			std::int32_t occupiedMarker = ReadInt(thread, seatBase + kSeatOccupiedOffset);
-			std::int32_t handCount = ReadInt(thread, seatBase + kSeatHandCountOffset);
-			std::int32_t currentHandIndex = ReadInt(thread, seatBase + kSeatCurrentHandIndexOffset);
-			std::int32_t insurance = ReadInt(thread, seatBase + kSeatInsuranceOffset);
+			ScriptLocal seatBase = SeatLocal(thread, seat);
+			std::int32_t occupiedMarker = seatBase.At(kSeatOccupiedField).AsInt32();
+			std::int32_t handCount = seatBase.At(kSeatHandCountField).AsInt32();
+			std::int32_t currentHandIndex = seatBase.At(kSeatCurrentHandField).AsInt32();
+			std::int32_t insurance = seatBase.At(kSeatInsuranceField).AsInt32();
 
 			Log::Write("  seat {} (base slot {}): occupiedMarker(f_0)={} handCount(f_59)={} currentHandIndex(f_3, Session 5)={} insurance(f_2, -1 = undecided)={}{}{}",
-				seat, seatBase, occupiedMarker, handCount, currentHandIndex, insurance,
+				seat, seatBase.Index(), occupiedMarker, handCount, currentHandIndex, insurance,
 				(currentHandIndex < 0) ? "  <-- waiting for its turn" : (currentHandIndex < handCount) ? "  <-- acting now" : "  <-- done acting (or unoccupied)",
 				(static_cast<std::int32_t>(seat) == mySeat) ? "  <-- candidate YOUR SEAT" : "");
 
@@ -2747,20 +3114,23 @@ namespace BlackjackCheat
 
 			for (std::uint32_t h = 0; h < kMaxHandsPerSeat; h++)
 			{
-				std::uint32_t handSlot = seatBase + kSeatHandsOffset + h * kHandStride;
-				HandCards hand = ReadHand(thread, handSlot);
+				ScriptLocal handSlot = SeatHandLocal(seatBase, h);
+				HandCards hand = ReadHand(handSlot);
 				std::string handStr = FormatHandCards(hand);
-				std::int32_t rawValueField = ReadInt(thread, handSlot + kHandValueOffset);
-				Log::Write("    hand {} (slot {}): count={} cards=[ {}] rawValueField(f_24)={}",
-					h, handSlot, hand.count, handStr, rawValueField);
+				std::int32_t rawValueField = handSlot.At(kHandValueField).AsInt32();
+				Log::Write("    hand {} (struct at slot {}): count={} cards=[ {}] rawValueField(f_24)={}",
+					h, handSlot.Index(), hand.count, handStr, rawValueField);
 			}
 		}
 
-		Log::Write("ProbeTableStruct: raw window around kTableSlot (slot {}), offsets -4..+40, for re-deriving offsets if any of the above looks wrong:", kTableSlot);
-		for (std::int32_t off = -4; off <= 40; off++)
+		// Raw window, labelled by decompiled table.f_N (the old labels
+		// were relative to a base one word higher: old +N = f_(N+1) here).
+		const std::uint32_t tableIndex = LiveTableLocal(thread).Index();
+		Log::Write("ProbeTableStruct: raw window around the live table (uLocal_14.f_756, slot {}), table.f_-3..f_41, for re-deriving offsets if any of the above looks wrong:", tableIndex);
+		for (std::int32_t off = -3; off <= 41; off++)
 		{
-			std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(static_cast<std::int32_t>(kTableSlot) + off));
-			Log::Write("  tableraw[{:+}] (slot {}) = {}", off, static_cast<std::int32_t>(kTableSlot) + off, value);
+			const std::uint32_t slot = static_cast<std::uint32_t>(static_cast<std::int32_t>(tableIndex) + off);
+			Log::Write("  table.f_{} (slot {}) = {}", off, slot, ScriptLocal(thread, slot).AsInt32());
 		}
 	}
 
@@ -2776,15 +3146,15 @@ namespace BlackjackCheat
 		auto base = reinterpret_cast<std::uintptr_t>(thread->m_Stack);
 		std::uint32_t stackSizeSlots = thread->m_Context.m_StackSize;
 		std::uintptr_t end = base + static_cast<std::uintptr_t>(stackSizeSlots) * 8u;
-		std::uintptr_t localBase = base + static_cast<std::uintptr_t>(kLocalStructIndex) * 8u;
-		std::uintptr_t tableBase = base + static_cast<std::uintptr_t>(kTableSlot) * 8u;
+		std::uintptr_t localBase = base + static_cast<std::uintptr_t>(RootLocal(thread).Index()) * 8u;
+		std::uintptr_t tableBase = base + static_cast<std::uintptr_t>(LiveTableLocal(thread).Index()) * 8u;
 
 		Log::Write("DumpLocalStackRange: start=0x{:X} end=0x{:X} (size={} slots, {} bytes)",
 			static_cast<unsigned long long>(base), static_cast<unsigned long long>(end),
 			stackSizeSlots, static_cast<unsigned long long>(end - base));
-		Log::Write("DumpLocalStackRange: uLocal_14 (slot {}) starts at 0x{:X}, Table candidate (slot {}) starts at 0x{:X}",
-			kLocalStructIndex, static_cast<unsigned long long>(localBase),
-			kTableSlot, static_cast<unsigned long long>(tableBase));
+		Log::Write("DumpLocalStackRange: uLocal_14 (slot {}) starts at 0x{:X}, live table uLocal_14.f_756 (slot {}) starts at 0x{:X}",
+			RootLocal(thread).Index(), static_cast<unsigned long long>(localBase),
+			LiveTableLocal(thread).Index(), static_cast<unsigned long long>(tableBase));
 	}
 
 	void ProbeSeatHands()
@@ -2797,16 +3167,16 @@ namespace BlackjackCheat
 		}
 
 		std::int32_t mySeat = FindMySeatByPed(thread);
-		std::int32_t mySeatByF9 = ReadInt(thread, kMySeatSlot);
-		Log::Write("ProbeSeatHands: mySeat (ped-array, unreliable -- -1 live in Session 18)={}, f_9 (CONFIRMED LIVE)={}{}",
+		std::int32_t mySeatByF9 = MySeatLocal(thread).AsInt32();
+		Log::Write("ProbeSeatHands: mySeat (ped-array, CONFIRMED LIVE)={}, f_9 (CONFIRMED LIVE)={}{}",
 			mySeat, mySeatByF9, (mySeat == mySeatByF9) ? "  <-- AGREE" : "  <-- DISAGREE");
 
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 		{
-			std::uint32_t seatBase = kTableSlot + kSeatsBase + seat * kSeatStride;
-			std::int32_t occupiedMarker = ReadInt(thread, seatBase + kSeatOccupiedOffset);
-			std::int32_t handCount = ReadInt(thread, seatBase + kSeatHandCountOffset);
-			std::int32_t bankroll = ReadInt(thread, seatBase + kSeatBankrollOffset);
+			ScriptLocal seatBase = SeatLocal(thread, seat);
+			std::int32_t occupiedMarker = seatBase.At(kSeatOccupiedField).AsInt32();
+			std::int32_t handCount = seatBase.At(kSeatHandCountField).AsInt32();
+			std::int32_t bankroll = seatBase.At(kSeatBankrollField).AsInt32();
 
 			if (occupiedMarker == -1)
 			{
@@ -2815,20 +3185,20 @@ namespace BlackjackCheat
 			}
 
 			Log::Write("  seat {}: bankroll(f_1, candidate, slot {})={} -- sanity check: should look like a plausible in-game dollar amount",
-				seat, seatBase + kSeatBankrollOffset, bankroll);
+				seat, seatBase.At(kSeatBankrollField).Index(), bankroll);
 
 			for (std::int32_t h = 0; h < handCount && h < static_cast<std::int32_t>(kMaxHandsPerSeat); h++)
 			{
-				std::uint32_t handSlot = seatBase + kSeatHandsOffset + static_cast<std::uint32_t>(h) * kHandStride;
-				HandCards hand = ReadHand(thread, handSlot);
+				ScriptLocal handSlot = SeatHandLocal(seatBase, static_cast<std::uint32_t>(h));
+				HandCards hand = ReadHand(handSlot);
 				BlackjackHandEval::HandValue value = BlackjackHandEval::EvaluateHand(hand.ranks, hand.count);
 				std::string handStr = FormatHandCards(hand);
-				std::int32_t bet = ReadInt(thread, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h));
-				std::int32_t betArraySize = ReadInt(thread, seatBase + kSeatBetArrayOffset);
+				std::int32_t bet = SeatBetLocal(seatBase, static_cast<std::uint32_t>(h)).AsInt32();
+				std::int32_t betArraySize = seatBase.At(kSeatBetsField).AsInt32();
 				bool isSplitAceHand = (handCount == static_cast<std::int32_t>(kMaxHandsPerSeat)) && hand.count > 0 && hand.ranks[0] == 14;
 
 				Log::Write("  seat {} hand {}: cards=[ {}] computedTotal={} soft={} bust={} blackjack={} bet(f_4[{}], slot {})={} betArraySizeWord(f_4, expect {})={} isSplitAceHand(candidate)={}{}",
-					seat, h, handStr, value.total, value.soft, value.bust, value.blackjack, h, seatBase + kSeatBetOffset + static_cast<std::uint32_t>(h), bet,
+					seat, h, handStr, value.total, value.soft, value.bust, value.blackjack, h, SeatBetLocal(seatBase, static_cast<std::uint32_t>(h)).Index(), bet,
 					kMaxHandsPerSeat, betArraySize, isSplitAceHand,
 					(static_cast<std::int32_t>(seat) == mySeat) ? "  <-- candidate YOUR SEAT" : "");
 			}
@@ -2844,7 +3214,7 @@ namespace BlackjackCheat
 			return;
 		}
 
-		HandCards dealerHand = ReadHand(thread, kTableSlot + kDealerHandOffset);
+		HandCards dealerHand = ReadHand(DealerHandLocal(LiveTableLocal(thread)));
 		if (dealerHand.count < 2)
 		{
 			Log::Write("ProbeDeckPrediction: dealer has fewer than 2 cards right now (count={}) -- run this again once a hand is dealt", dealerHand.count);
@@ -2855,7 +3225,7 @@ namespace BlackjackCheat
 			RankName(dealerHand.ranks[0]), SuitLetter(dealerHand.suits[0]),
 			RankName(dealerHand.ranks[1]), SuitLetter(dealerHand.suits[1]));
 
-		std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
+		std::int32_t deckCursor = DeckLocal(thread).At(kDeckCursorField).AsInt32();
 		std::int32_t deckCount = ReadDeckCount(thread);
 		PredictedHand predicted = SimulateDealerOutcome(thread, dealerHand, deckCursor, deckCount);
 		BlackjackHandEval::HandValue predValue = BlackjackHandEval::EvaluateHand(predicted.ranks, predicted.totalCount);
@@ -2870,8 +3240,8 @@ namespace BlackjackCheat
 			std::int32_t idx = deckCursor + i;
 			if (idx < 0 || idx >= deckCount)
 				break;
-			std::int32_t rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
-			std::int32_t suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+			std::int32_t rank = DeckCardLocal(thread, idx).At(kCardRankField).AsInt32();
+			std::int32_t suit = DeckCardLocal(thread, idx).At(kCardSuitField).AsInt32();
 			Log::Write("  deck[{}]: {}{}", idx, RankName(rank), SuitLetter(suit));
 		}
 	}

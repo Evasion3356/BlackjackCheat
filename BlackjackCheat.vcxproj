@@ -52,6 +52,8 @@
     <ClInclude Include="src\BlackjackCheat.h" />
     <ClInclude Include="src\BlackjackHandEval.h" />
     <ClInclude Include="src\BlackjackDeckSim.h" />
+    <ClInclude Include="src\RoundRecord.h" />
+    <ClInclude Include="src\ScriptLocal.h" />
     <ClInclude Include="src\PatternScan.h" />
     <ClInclude Include="src\GamePointers.h" />
     <ClInclude Include="src\Config.h" />
