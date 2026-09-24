@@ -1830,3 +1830,16 @@ textbook estimate. Round 5 (18 vs 8,6) was a sure loss shown as Medium.
 **To confirm live:** play rounds with AI seats and check every round
 line has `"dealerPredictionMatch":true`. A split by an AI seat hasn't
 been seen yet: the split dealing order is assumed to match mine.
+
+Follow-up, same session:
+- **Money is in cents.** Bankroll/bet (`seat.f_1`, `seat.f_4[h]`) read
+  300 for $3.00. The field comments now say so. Older journal entries
+  that say "$250 bet" etc. mean 250 cents.
+- **Decision lines log `taken`/`followedAdvice`.** Live ticks after a
+  decision resolve what I did: a second hand is Split, a new card is a Hit
+  (a Double if `f_4[h]` grew), and `f_3` moving past the hand is Stand.
+  When my action is the last one before the dealer, it lands in the
+  live-reset tick, so `ResolvePendingAtEnd()` infers it from the final
+  hand and net. First test (user doubled A,9 vs A,6 against Stand
+  advice) was before this existed. Unconfirmed: whether a Double's bet
+  update lands in the same tick as its card (if not, it logs as Hit).

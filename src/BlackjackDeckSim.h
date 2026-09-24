@@ -1078,7 +1078,7 @@ namespace BlackjackDeckSim
 	// assumed able to afford a second bet -- their bets aren't down yet.
 	// Before the AI model this fell back to a textbook estimate whenever
 	// another seat drew around mine -- every round of the first round log.
-	// Its round 5 (18 vs 14, a sure loss) showed Medium and cost $402.
+	// Its round 5 (18 vs 14, a sure loss) showed Medium and cost $4.02.
 	// Returns Low if deckRanks doesn't even cover the initial deal.
 	inline BlackjackHandEval::BettingConfidence EvaluatePreDealBetting(
 		const std::int32_t* deckRanks, std::int32_t deckCount,

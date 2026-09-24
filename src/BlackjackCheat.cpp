@@ -948,10 +948,10 @@ namespace BlackjackCheat
 
 	// Seat fields (table.f_27[seat]).
 	constexpr std::uint32_t kSeatOccupiedField = 0;     // seat.f_0 -- != -1 means occupied, confirmed (func_116)
-	constexpr std::uint32_t kSeatBankrollField = 1;     // seat.f_1 -- bankroll. CONFIRMED LIVE (round log: 300 -> 400 on a doubled $50 win). Read by the advice loop's canDouble/canSplit gate (func_1237: `f_1 >= f_4[handIndex]`).
+	constexpr std::uint32_t kSeatBankrollField = 1;     // seat.f_1 -- bankroll, in CENTS (300 = $3.00). CONFIRMED LIVE (round log: 300 -> 400 on a doubled 50-cent win). Read by the advice loop's canDouble/canSplit gate (func_1237: `f_1 >= f_4[handIndex]`).
 	constexpr std::uint32_t kSeatInsuranceField = 2;    // seat.f_2 -- insurance stake, -1 = not decided yet (reset with f_3 at round start; func_718 case 2 / func_1060). Static trace only. Read by the insurance window check.
 	constexpr std::uint32_t kSeatCurrentHandField = 3;  // seat.f_3 -- current-hand index: -1 while waiting (reset at round start), 0.. while acting, == f_59 once done (func_1063's `f_3 < f_59`). HIGH confidence (Session 5), live-consistent.
-	constexpr std::uint32_t kSeatBetsField = 4;         // seat.f_4[h] -- bet per hand. CONFIRMED LIVE (Session 18: a $250 bet read 250 at f_4[0], the size word read 2). The old flat read of "f_4" was the size word, so canDouble reduced to `bankroll >= 2`. The bet only lands here at the deal (round log: it read 0 all through betting).
+	constexpr std::uint32_t kSeatBetsField = 4;         // seat.f_4[h] -- bet per hand, in cents like f_1. CONFIRMED LIVE (Session 18: a $2.50 bet read 250 at f_4[0], the size word read 2). The old flat read of "f_4" was the size word, so canDouble reduced to `bankroll >= 2`. The bet only lands here at the deal (round log: it read 0 all through betting).
 	constexpr std::uint32_t kSeatBetLockedField = 7;    // seat.f_7 -- "bet locked in" flag. CONFIRMED LIVE (Session 9: 0 pre-confirm, 1 post-confirm for the human; NPCs lock instantly). func_1056 needs it on every occupied seat to leave state 0; func_1057 checks it before dealing a seat in. Probe-only.
 	constexpr std::uint32_t kSeatHandsField = 8;        // seat.f_8[h /*25*/] -- hand structs. CONFIRMED LIVE (Session 6: old flat offset 10 = f_8[0]'s card 0, verified against all 4 seats' real cards).
 	constexpr std::uint32_t kSeatHandCountField = 59;   // seat.f_59 -- hands in play (1, or 2 after a split). CONFIRMED LIVE (Session 7 second addendum).
@@ -1821,6 +1821,19 @@ namespace BlackjackCheat
 				ULONGLONG liveEndedAt = 0;
 				std::vector<std::string> lines; // decision lines, written ahead of the round line
 				std::int32_t lastDecisionKey = -1;
+
+				// The latest decision line, until what I actually did is
+				// known ("taken") -- see ResolvePendingLive()/ResolvePendingAtEnd().
+				struct PendingDecision
+				{
+					bool active = false;
+					std::size_t lineIndex = 0;
+					std::int32_t hand = 0;
+					std::int32_t cardCount = 0;
+					std::int32_t handCount = 0;
+					std::int32_t bet = 0;
+					std::string advised;
+				} pending;
 			};
 
 			State g_state;
@@ -1940,7 +1953,7 @@ namespace BlackjackCheat
 				// Bankroll from the betting phase, not now: a natural is paid
 				// (and its bet zeroed) in the same tick as the deal. The bet
 				// itself only lands in f_4[0] at the deal (live: it read 0
-				// all through betting on a $500 round), so read it now and
+				// all through betting on a $5.00 round), so read it now and
 				// fall back to the betting-phase value for a natural.
 				ScriptLocal mySeatBase = SeatLocal(thread, static_cast<std::uint32_t>(mySeat));
 				std::int32_t betAtDeal = SeatBetLocal(mySeatBase, 0).AsInt32();
@@ -2020,6 +2033,79 @@ namespace BlackjackCheat
 				return hands;
 			}
 
+			// Adds what I actually did to the pending decision line:
+			// "taken" and whether it matched the advice.
+			void SetTaken(std::string_view taken)
+			{
+				std::string& line = g_state.lines[g_state.pending.lineIndex];
+				line.insert(line.size() - 1, std::string(",\"taken\":\"") + std::string(taken) + "\",\"followedAdvice\":"
+					+ (taken == g_state.pending.advised ? "true" : "false"));
+				g_state.pending.active = false;
+			}
+
+			// Watches my seat on live ticks after a decision: a second hand
+			// is a Split, a new card is a Hit (a Double if the bet grew too),
+			// and the turn moving past the hand is a Stand.
+			void ResolvePendingLive(rage::scrThread* thread)
+			{
+				const State::PendingDecision& p = g_state.pending;
+				if (!p.active)
+					return;
+
+				ScriptLocal seatBase = SeatLocal(thread, static_cast<std::uint32_t>(g_state.mySeat));
+				std::int32_t handCount = seatBase.At(kSeatHandCountField).AsInt32();
+				if (handCount <= 0)
+					return; // mid-reset
+				if (handCount > p.handCount)
+				{
+					SetTaken("Split");
+					return;
+				}
+				if (ReadHand(SeatHandLocal(seatBase, static_cast<std::uint32_t>(p.hand))).count > p.cardCount)
+				{
+					SetTaken(SeatBetLocal(seatBase, static_cast<std::uint32_t>(p.hand)).AsInt32() > p.bet ? "Double" : "Hit");
+					return;
+				}
+				if (seatBase.At(kSeatCurrentHandField).AsInt32() != p.hand)
+					SetTaken("Stand");
+			}
+
+			// My last action can land in the same tick as the live reset
+			// (when no seat acts after mine), so it's never seen live. Work
+			// it out from the end state instead. One more card on a hand
+			// still under 21 must be a Double: a Hit leaves the turn open,
+			// so the next decision would have been logged on a live tick.
+			// On 21 or a bust, the money tells a Double (2x the bet) from a
+			// Hit; a push can't, so that's "HitOrDouble".
+			void ResolvePendingAtEnd(const TableView& end, bool haveNet, std::int64_t net)
+			{
+				const State::PendingDecision& p = g_state.pending;
+				if (!p.active)
+					return;
+				if (end.handCount > p.handCount)
+				{
+					SetTaken("Split");
+					return;
+				}
+				if (p.hand >= end.handCount || end.myHands[p.hand].count <= p.cardCount)
+				{
+					SetTaken("Stand");
+					return;
+				}
+
+				const HandCards& hand = end.myHands[p.hand];
+				BlackjackHandEval::HandValue value = BlackjackHandEval::EvaluateHand(hand.ranks, hand.count);
+				const std::int64_t absNet = net < 0 ? -net : net;
+				if (!value.bust && value.total < 21)
+					SetTaken("Double");
+				else if (haveNet && end.handCount == 1 && absNet == 2 * std::int64_t{ g_state.bet })
+					SetTaken("Double");
+				else if (haveNet && end.handCount == 1 && absNet == g_state.bet)
+					SetTaken("Hit");
+				else
+					SetTaken("HitOrDouble");
+			}
+
 			void Finish()
 			{
 				// The presentation copy's last snapshot is the real end
@@ -2092,6 +2178,9 @@ namespace BlackjackCheat
 						.Add("net", std::int64_t{ g_state.bankrollAfter } - g_state.bankrollBeforeRound);
 				}
 
+				const bool haveNet = g_state.bankrollBeforeRound >= 0;
+				ResolvePendingAtEnd(end, haveNet, std::int64_t{ g_state.bankrollAfter } - g_state.bankrollBeforeRound);
+
 				g_state.lines.push_back(line.Str());
 				AppendLines(g_state.lines);
 				g_state = State{};
@@ -2137,6 +2226,7 @@ namespace BlackjackCheat
 						for (std::uint32_t i = 0; i < kHandStride; i++)
 							g_state.myLiveHandRaw[i] = hand.At(i).AsInt32();
 						g_state.haveLiveHandRaw = true;
+						ResolvePendingLive(thread);
 					}
 					return;
 				}
@@ -2197,7 +2287,22 @@ namespace BlackjackCheat
 					.Add("seatsAfterCounts", afterCounts, after.count)
 					.Add("seatsAfterCanAfford", afterCanAfford, after.count)
 					.Add("action", ActionName(action));
+
+				// A decision still pending here was never resolved (it should
+				// be by now: a new decision means I acted on the last one).
+				ResolvePendingLive(thread);
+				if (g_state.pending.active)
+					SetTaken("Unknown");
+
+				ScriptLocal seatBase = SeatLocal(thread, static_cast<std::uint32_t>(g_state.mySeat));
 				g_state.lines.push_back(line.Str());
+				g_state.pending.active = true;
+				g_state.pending.lineIndex = g_state.lines.size() - 1;
+				g_state.pending.hand = handIndex;
+				g_state.pending.cardCount = hand.count;
+				g_state.pending.handCount = seatBase.At(kSeatHandCountField).AsInt32();
+				g_state.pending.bet = SeatBetLocal(seatBase, static_cast<std::uint32_t>(handIndex)).AsInt32();
+				g_state.pending.advised = ActionName(action);
 			}
 		}
 #endif

@@ -14,8 +14,11 @@
 	      cursor), canDouble, canSplit, isSplitAceHand, the seats still to
 	      act after mine (seatsAfterKnown, seatsAfterRanks -- every seat's
 	      cards back to back -- seatsAfterCounts, seatsAfterCanAfford),
-	      plus the action the mod showed ("action"). Older lines carry
-	      isLastBeforeDealer instead; the replay test still reads it.
+	      plus the action the mod showed ("action"), what I actually did
+	      ("taken": Hit/Stand/Double/Split, HitOrDouble when a last-action
+	      push can't tell, Unknown if never seen) and "followedAdvice".
+	      Older lines carry isLastBeforeDealer instead; the replay test
+	      still reads it. Money (bet, bankroll*, net) is in cents.
 	  {"type":"round", ...}     one per round, written when it ends: the
 	      whole deck as dealt (deckRanks, deckRanks[0] = first card dealt),
 	      seatsDealt, mySeat -- every input EvaluatePreDealBetting() takes --
