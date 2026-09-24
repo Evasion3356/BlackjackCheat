@@ -168,8 +168,12 @@ namespace
 		// (a missing key, a stale one to prune, a value to normalize).
 		// inipp's generate() can't round-trip comments, so rewriting an
 		// already-complete file on every load/Reload Config silently
-		// deleted any notes the user had added to it.
-		if (fileRead && out.sections == ini.sections)
+		// deleted any notes the user had added to it. Only when the file
+		// was read from the same place it would be written, though: in
+		// the unwritable-game-folder case the read is the shipped INI and
+		// the write creates the user's editable %LOCALAPPDATA% copy,
+		// which must still happen even when the shipped one is complete.
+		if (fileRead && IniPaths().read == IniPaths().write && out.sections == ini.sections)
 		{
 			Log::Write(L"Config::Reload -- loaded from {}, already up to date (ShowDealerHand={} ShowBettingAdvice={} ShowAdvice={} ShowDeckPrediction={} ShowCardsBeforeBet={})",
 				IniPaths().read, g_values.ShowDealerHand, g_values.ShowBettingAdvice, g_values.ShowAdvice, g_values.ShowDeckPrediction, g_values.ShowCardsBeforeBet);

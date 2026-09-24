@@ -14,9 +14,12 @@ tracks what an end user experiences, not internal implementation history
   hand you had already stood on.
 - Double and Split advice now check your real bet against your bankroll.
   The bet was being read from the wrong memory slot, so the check never
-  blocked anything. Not yet confirmed in-game.
-- Insurance advice now only shows while insurance can still be taken,
-  not for the whole round.
+  blocked anything.
+- Insurance advice now only shows while you still have to answer the
+  insurance prompt, not for the whole round.
+- In an install where the game folder isn't writable, the editable
+  settings copy in `%LOCALAPPDATA%\RDR2ASIMods\` is created again even
+  when the shipped INI is already complete.
 - Pre-deal betting advice no longer uses the deck to play out your hand
   when a seat before yours will draw first (those draws change your
   cards); it falls back to the rough estimate instead.

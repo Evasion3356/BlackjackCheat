@@ -991,6 +991,7 @@ namespace BlackjackCheat
 	// the size word (+4)=2 (an NPC seat read bet=4, size word 2).
 	constexpr std::uint32_t kSeatBetArrayOffset = 4;   // seat.f_4 -- the array's size word (expect 2)
 	constexpr std::uint32_t kSeatBetOffset = kSeatBetArrayOffset + 1; // seat.f_4[0] -- bet[h] is at +5+h. Session 10: read live by OnTick()'s advice loop for the canDouble/canSplit bankroll checks.
+	constexpr std::uint32_t kSeatInsuranceOffset = 2; // seat.f_2 -- insurance stake, -1 = not decided yet (reset with f_3 at round start; func_718 case 2 / func_1060). Static trace only, but it sits between the live-confirmed f_1 and f_3, before the first array (f_4) that could shift offsets. Read by OnTick()'s insurance window check.
 	constexpr std::uint32_t kSeatCurrentHandIndexOffset = 3; // seat.f_3 -- HIGH confidence (Session 5, f_N=offset+N convention + func_1063's direct f_3<f_59 comparison), static trace only. Read by DrawOverlay() to pick which split hand gets advice, with a first-live-hand fallback if it reads out of range
 	constexpr std::uint32_t kSeatBetConfirmedOffset = 7; // seat.f_7 -- CONFIRMED LIVE (Session 9 live addendum): a before/after dump pair caught it reading 0 for the human seat pre-confirm and 1 post-confirm, while both NPC seats already read 1 in BOTH dumps (they lock in instantly; the table visibly waits on the human) -- exactly the func_1056 mechanism this was traced from. func_759 (line ~27401) reads exactly `seat.f_7`, and that same field is what func_1056 requires nonzero on EVERY occupied seat before the table leaves state 0 for the next round, and what func_1057 (the actual initial-deal function) checks per-seat before dealing into it -- i.e. this is the real "this seat's bet is locked in" flag, not merely "a bet amount is set" (that's kSeatBetOffset/f_4[0], checked separately by both of those same functions). Not read by OnTick(), Probe-only as of Session 9's occupancy-only simplification (see SimulatePreDeal()'s own header comment) -- still a real, confirmed field, just no longer this file's gate for who's about to be dealt in.
 
@@ -2635,8 +2636,20 @@ namespace BlackjackCheat
 			// (bjack_sp.ysc.c, the `f_2[1] == 14` branch), which runs
 			// BEFORE state 4 moves any seat's f_3 from -1 to 0 -- so
 			// during the prompt my f_3 still reads -1, never 0.
+			//
+			// The cursor/f_3 test alone stays true after I've answered,
+			// until someone draws or my turn starts -- if the seats
+			// before mine all stand, that's their whole turn. seat.f_2
+			// closes that gap exactly: it's the seat's insurance stake,
+			// reset to -1 at round start alongside f_3 (bjack_sp.ysc.c
+			// ~18209), state 2 waits until every dealt seat's f_2 != -1
+			// (func_1060), and any answer leaves it >= 0 -- so -1 here
+			// means my decision is still pending. Static trace only;
+			// ProbeTableStruct() logs it per seat.
 			bool insuranceWindowOpen = false;
-			if (dealerHand.count == 2 && myHandCount == 1 && myCurrentHandIndex < 0 && myFirstHandCardCount == 2)
+			if (dealerHand.count == 2 && myHandCount == 1 && myCurrentHandIndex < 0 && myFirstHandCardCount == 2
+				&& mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount)
+				&& ReadInt(thread, kTableSlot + kSeatsBase + static_cast<std::uint32_t>(mySeat) * kSeatStride + kSeatInsuranceOffset) == -1)
 			{
 				std::int32_t dealtSeats = 0;
 				for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
@@ -2722,9 +2735,10 @@ namespace BlackjackCheat
 			std::int32_t occupiedMarker = ReadInt(thread, seatBase + kSeatOccupiedOffset);
 			std::int32_t handCount = ReadInt(thread, seatBase + kSeatHandCountOffset);
 			std::int32_t currentHandIndex = ReadInt(thread, seatBase + kSeatCurrentHandIndexOffset);
+			std::int32_t insurance = ReadInt(thread, seatBase + kSeatInsuranceOffset);
 
-			Log::Write("  seat {} (base slot {}): occupiedMarker(f_0)={} handCount(f_59)={} currentHandIndex(f_3, Session 5)={}{}{}",
-				seat, seatBase, occupiedMarker, handCount, currentHandIndex,
+			Log::Write("  seat {} (base slot {}): occupiedMarker(f_0)={} handCount(f_59)={} currentHandIndex(f_3, Session 5)={} insurance(f_2, -1 = undecided)={}{}{}",
+				seat, seatBase, occupiedMarker, handCount, currentHandIndex, insurance,
 				(currentHandIndex < 0) ? "  <-- waiting for its turn" : (currentHandIndex < handCount) ? "  <-- acting now" : "  <-- done acting (or unoccupied)",
 				(static_cast<std::int32_t>(seat) == mySeat) ? "  <-- candidate YOUR SEAT" : "");
 
