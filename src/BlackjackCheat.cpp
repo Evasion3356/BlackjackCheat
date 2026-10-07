@@ -1169,7 +1169,7 @@ namespace BlackjackCheat
 			for (int n = kCardSetProbeLo; n <= kCardSetProbeHi; n++)
 			{
 				std::string candidate = "card_set_" + std::to_string(n);
-				if (TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(candidate.c_str())))
+				if (TXD::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(candidate.c_str())))
 				{
 					outDict = candidate;
 					return true;
@@ -2346,7 +2346,7 @@ namespace BlackjackCheat
 
 		// Text panel -- Debug-only, same reasoning as PokerCheat's DrawLine/
 		// DrawPanel: this raw-data dump is a dev surface, not something an
-		// end user needs, and RDR2's legacy UI::DRAW_TEXT path has no real
+		// end user needs, and RDR2's legacy HUD::_DISPLAY_TEXT path has no real
 		// in-game font available to it regardless (see PokerCheat.cpp's
 		// DrawFontTest() header comment for the full derivation -- not
 		// re-litigated here, same game build, same conclusion).
@@ -2354,14 +2354,14 @@ namespace BlackjackCheat
 		{
 			const Config::Values& cfg = Config::Get();
 			float textScale = title ? cfg.TitleTextScale : cfg.TextScale;
-			UI::SET_TEXT_SCALE(0.0f, textScale);
+			HUD::SET_TEXT_SCALE(0.0f, textScale);
 			if (title)
-				UI::SET_TEXT_COLOR_RGBA(kTitleR, kTitleG, kTitleB, kTitleA);
+				HUD::_SET_TEXT_COLOR(kTitleR, kTitleG, kTitleB, kTitleA);
 			else
-				UI::SET_TEXT_COLOR_RGBA(kTextR, kTextG, kTextB, kTextA);
-			UI::SET_TEXT_CENTRE(0);
-			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
-			UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(text.c_str())), x, y);
+				HUD::_SET_TEXT_COLOR(kTextR, kTextG, kTextB, kTextA);
+			HUD::SET_TEXT_CENTRE(0);
+			HUD::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+			HUD::_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(text.c_str())), x, y);
 		}
 
 		void DrawPanel(float x, float y, float width, float height)
@@ -2373,7 +2373,7 @@ namespace BlackjackCheat
 		// Standalone advice readout ("HIT"/"STAND"/"DOUBLE"/"SPLIT"), drawn
 		// via the UIDEBUG::_BG_DISPLAY_TEXT/$Font5 pipeline -- the ONLY
 		// text pipeline confirmed to actually render on this game build
-		// (1491.50); UI::DRAW_TEXT/SET_TEXT_COLOR_RGBA are nullsub here
+		// (1491.50); HUD::_DISPLAY_TEXT/_SET_TEXT_COLOR are nullsub here
 		// (see PokerCheat.cpp's DrawFontTest() header comment for the full
 		// derivation -- a game-build fact, not poker-specific, carried
 		// over verbatim). Shown in both Debug and Release, same as
@@ -2405,7 +2405,7 @@ namespace BlackjackCheat
 			const char* formatText = WrapBgFormatText(Localization::ActionName(action), 40);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), adviceX, adviceY);
+			UIDEBUG::_BG_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), adviceX, adviceY);
 		}
 
 		// Betting advice, same pipeline/convention as DrawAdviceStatus but
@@ -2467,7 +2467,7 @@ namespace BlackjackCheat
 			const char* formatText = WrapBgFormatText(label, 32);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
+			UIDEBUG::_BG_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
 		}
 
 		// Same pipeline/convention as DrawAdviceStatus -- positioned just
@@ -2493,7 +2493,7 @@ namespace BlackjackCheat
 			const char* formatText = WrapBgFormatText(label, 26);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
+			UIDEBUG::_BG_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
 		}
 
 		// Dealer's real hole card, PRIMARY feature as of Session 4 -- exact
@@ -2529,7 +2529,7 @@ namespace BlackjackCheat
 			std::string cardSetDict;
 			if (!FindLoadedCardSetDict(cardSetDict))
 			{
-				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
+				TXD::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
 				return;
 			}
 
@@ -2570,7 +2570,7 @@ namespace BlackjackCheat
 			std::string cardSetDict;
 			if (!FindLoadedCardSetDict(cardSetDict))
 			{
-				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
+				TXD::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
 				return;
 			}
 
@@ -2647,7 +2647,7 @@ namespace BlackjackCheat
 			std::string cardSetDict;
 			if (!FindLoadedCardSetDict(cardSetDict))
 			{
-				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
+				TXD::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
 				return;
 			}
 
@@ -2691,7 +2691,7 @@ namespace BlackjackCheat
 			const char* formatText = WrapBgFormatText(Localization::NextCardsLabel(), 26);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(180, 255, 220, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
+			UIDEBUG::_BG_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), x, y);
 
 			DrawNextCardIcons(ranks, suits, count);
 		}
