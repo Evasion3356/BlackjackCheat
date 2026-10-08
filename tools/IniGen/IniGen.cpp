@@ -15,6 +15,6 @@
 
 int main()
 {
-	Config::Reload();
+	BlackjackCheat::Config::Reload();
 	return 0;
 }

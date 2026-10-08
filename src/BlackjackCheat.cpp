@@ -843,7 +843,7 @@
 #include "BlackjackDeckSim.h"
 #include "RoundRecord.h"
 #include "LogFallback.h"
-#include "Log.h"
+#include "BlackjackCheatLog.h"
 #include "GamePointers.h"
 #include "ScriptLocal.h"
 #include "Config.h"

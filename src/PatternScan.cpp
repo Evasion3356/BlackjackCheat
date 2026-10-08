@@ -1,11 +1,14 @@
 #include "PatternScan.h"
-#include "Log.h"
+#include "BlackjackCheatLog.h"
+#include "LogFallback.h"
 
 #include <windows.h>
 #include <vector>
 #include <string>
 #include <cstring>
 
+namespace BlackjackCheat
+{
 namespace
 {
 	struct ParsedPattern
@@ -158,3 +161,4 @@ namespace PatternScan
 		return operandAddr + sizeof(std::int32_t) + displacement;
 	}
 }
+} // namespace BlackjackCheat

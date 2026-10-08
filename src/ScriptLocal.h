@@ -31,6 +31,8 @@
 
 #include <cstdint>
 #include <cstring>
+namespace BlackjackCheat
+{
 
 class ScriptLocal
 {
@@ -87,3 +89,4 @@ public:
 		return value;
 	}
 };
+} // namespace BlackjackCheat

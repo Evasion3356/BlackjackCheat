@@ -12,10 +12,13 @@
 
 #include "scriptmenu.h" // pulls in script.h (natives/types/enums/main) and keyboard.h
 #include "Log.h"
+#include "BlackjackCheatLog.h"
 #include "BlackjackCheat.h"
 #include "Config.h"
 #include "Localization.h"
 #include "GamePointers.h"
+
+namespace Config = BlackjackCheat::Config;
 
 namespace
 {
@@ -25,7 +28,7 @@ namespace
 
 	// Re-picks the active HUD language immediately after an ini edit,
 	// same live-tuning workflow as every other Config-backed value here
-	// -- Localization::Refresh() itself can't just be called from
+	// -- BlackjackCheat::Localization::Refresh() itself can't just be called from
 	// Config::Reload() directly (see Localization.h's header comment):
 	// it invokes a real game native, so it must run from inside
 	// ScriptHookRDR2's script fiber, same as this menu action already
@@ -33,7 +36,7 @@ namespace
 	void ReloadConfigAndLocalization()
 	{
 		Config::Reload();
-		Localization::Refresh();
+		BlackjackCheat::Localization::Refresh();
 	}
 
 	void BuildMenu()
@@ -53,14 +56,15 @@ namespace
 
 void ScriptMain()
 {
+	BlackjackCheat::Log::SetSink([](std::string_view line) { Log::Write("{}", line); });
 	Log::Write("BlackjackCheat started");
 	Log::Trace("ScriptMain: entered on script fiber, tid={}", GetCurrentThreadId());
 
 	// Startup work that used to live in DllMain -- see main.cpp for why.
 	Log::Trace("ScriptMain: Config::Reload begin");
 	Config::Reload();
-	Log::Trace("ScriptMain: GamePointers::GetScriptThreads begin");
-	GamePointers::GetScriptThreads();
+	Log::Trace("ScriptMain: BlackjackCheat::GamePointers::GetScriptThreads begin");
+	BlackjackCheat::GamePointers::GetScriptThreads();
 	Log::Trace("ScriptMain: startup done");
 
 #ifdef _DEBUG

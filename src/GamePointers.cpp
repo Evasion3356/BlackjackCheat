@@ -1,6 +1,7 @@
 #include "GamePointers.h"
 #include "PatternScan.h"
-#include "Log.h"
+#include "BlackjackCheatLog.h"
+#include "LogFallback.h"
 
 #include <windows.h>
 
@@ -10,6 +11,8 @@
 #include <cstring>
 #include <cmath>
 
+namespace BlackjackCheat
+{
 namespace
 {
 	// HorseMenu's "ScriptThreads&RunScriptThreads" signature -- see
@@ -174,3 +177,4 @@ namespace GamePointers
 		return DumpLocalStackJsonl(thread, 0, thread->m_Context.m_StackSize, outPath);
 	}
 }
+} // namespace BlackjackCheat

@@ -44,7 +44,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace Localization
+namespace BlackjackCheat::Localization
 {
 	// Matches LOCALIZATION::GET_CURRENT_LANGUAGE()'s own return value
 	// mapping exactly -- same enum PokerCheat's Localization.h uses
